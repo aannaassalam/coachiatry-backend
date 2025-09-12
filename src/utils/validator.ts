@@ -1,0 +1,76 @@
+import * as Joi from "joi";
+import { Request, Response, NextFunction } from "express";
+import AppError from "./appError";
+
+// User signup validation schema - name, email, password, passwordConfirm are required
+const userSignupSchema = Joi.object({
+    fullName: Joi.string().min(2).max(50).trim().required(),
+    email: Joi.string().email().required(),
+    photo: Joi.string().uri().allow(""),
+    phone: Joi.string()
+        .pattern(/^[0-9+\-\s()]+$/)
+        .min(10)
+        .max(15),
+    password: Joi.string().min(8),
+    // role: Joi.string().valid('admin', 'consultant').default('consultant')
+})
+    .unknown(false)
+    .messages({
+        "object.unknown": 'Invalid input - field "{#label}" is not allowed',
+    });
+
+// User update validation schema - only allow specific fields
+// Only allow safe fields to be updated: name, photo, active
+// Exclude sensitive fields like email, password, role, otp, etc.
+const userUpdateSchema = Joi.object({
+    fullName: Joi.string().min(2).max(50).trim(),
+    photo: Joi.string().uri().allow(""),
+    phone: Joi.string()
+        .pattern(/^[0-9+\-\s()]+$/)
+        .min(10)
+        .max(15),
+})
+    .unknown(false)
+    .messages({
+        "object.unknown": 'Invalid input - field "{#label}" is not allowed',
+    });
+
+const documentUpdateSchema = Joi.object({
+    title: Joi.string().min(2).max(50).trim().required(),
+    tag: Joi.string().min(2).max(50).trim().required(),
+    content: Joi.string().trim().required(),
+})
+    .unknown(false)
+    .messages({
+        "object.unknown": 'Invalid input - field "{#label}" is not allowed',
+    });
+
+// Generic validation middleware factory
+const validatePayload = (schema: Joi.ObjectSchema) => {
+    return (req: Request, res: Response, next: NextFunction) => {
+        const { error } = schema.validate(req.body, {
+            abortEarly: false, // Show all validation errors
+            stripUnknown: true, // Don't strip unknown fields, throw error instead
+        });
+
+        if (error) {
+            const errorMessage = error.details
+                .map((detail) => detail.message)
+                .join(", ");
+            return next(new AppError("Invalid input", 400));
+        }
+
+        next();
+    };
+};
+
+// Specific middleware for user signup
+export const validateUserSignup = validatePayload(userSignupSchema);
+
+// Specific middleware for user updates
+export const validateUserUpdate = validatePayload(userUpdateSchema);
+
+export const validateDocumentUpdate = validatePayload(documentUpdateSchema);
+
+// Export the factory function for potential future use
+export { validatePayload };
