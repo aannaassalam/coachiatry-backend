@@ -24,11 +24,13 @@ const userSignupSchema = Joi.object({
 // Exclude sensitive fields like email, password, role, otp, etc.
 const userUpdateSchema = Joi.object({
     fullName: Joi.string().min(2).max(50).trim(),
+    email: Joi.string().email(),
     photo: Joi.string().uri().allow(""),
     phone: Joi.string()
         .pattern(/^[0-9+\-\s()]+$/)
         .min(10)
-        .max(15),
+        .max(15)
+        .optional(),
 })
     .unknown(false)
     .messages({
@@ -37,7 +39,7 @@ const userUpdateSchema = Joi.object({
 
 const documentUpdateSchema = Joi.object({
     title: Joi.string().min(2).max(50).trim().required(),
-    tag: Joi.string().min(2).max(50).trim().required(),
+    // tag: Joi.string().min(2).max(50).trim().required(),
     content: Joi.string().trim().required(),
 })
     .unknown(false)
@@ -57,6 +59,7 @@ const validatePayload = (schema: Joi.ObjectSchema) => {
             const errorMessage = error.details
                 .map((detail) => detail.message)
                 .join(", ");
+            console.log(errorMessage);
             return next(new AppError("Invalid input", 400));
         }
 

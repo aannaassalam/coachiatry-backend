@@ -18,6 +18,7 @@ interface Message {
 
 interface CreateOptions extends Message {
     afterCreate?: (doc: any) => Promise<void> | void;
+    userAsDocumentOwner?: boolean;
 }
 
 interface GetAllOptions extends Message {
@@ -65,7 +66,11 @@ export const updateOne = (Model: Model<Document>, options?: Message) =>
 
 export const createOne = (Model: Model<Document>, options?: CreateOptions) =>
     catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-        const doc = await Model.create(req.body);
+        const body = req.body;
+        if (options.userAsDocumentOwner) {
+            body.user = req.user._id;
+        }
+        const doc = await Model.create(body);
 
         // Execute afterCreate callback if provided
         if (options?.afterCreate) {

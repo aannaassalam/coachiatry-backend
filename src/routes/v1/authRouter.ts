@@ -6,14 +6,14 @@ const router = express.Router();
 
 router.post("/signup", validateUserSignup, authController.signup);
 router.post("/login", authController.login);
-router.post("/forgotPassword", authController.forgotPassword);
+router.post("/forgot-password", authController.forgotPassword);
 router.post("/verifyOtp", authController.verifyOtp);
-router.post("/resetPassword", authController.resetPassword);
+router.post("/reset-password", authController.resetPassword);
 
 // Protect all routes after this middleware
 router.use(authController.protect);
 
-router.patch("/updatePassword", authController.updatePassword);
+router.patch("/update-password", authController.updatePassword);
 
 // Example of role-based restriction:
 // router.get('/adminOnly', authController.restrictTo('admin'), (req, res) => res.send('Admin only!'));

@@ -1,31 +1,27 @@
 import mongoose, { Document, Schema } from "mongoose";
 import { ObjectId } from "mongoose";
 
-export interface IMessage extends Document {
-    _id: ObjectId;
-    chatId: ObjectId;
-    senderId: ObjectId;
+export interface IMessageDocument extends Document {
+    chat: ObjectId;
+    sender: ObjectId;
     type: "text" | "image" | "video" | "file" | "system";
     content: String;
-    files: [
-        {
-            url: String;
-            type: String;
-            size: Number;
-            thumbnailUrl: String;
-            duration: Number;
-        },
-    ];
-    reactions: [
-        {
-            userId: ObjectId;
-            emoji: String;
-            reactedAt: Date;
-        },
-    ];
+    files: {
+        url: String;
+        type: String;
+        size: Number;
+        thumbnailUrl: String;
+        duration: Number;
+    }[];
+    reactions: {
+        user: ObjectId;
+        emoji: String;
+        reactedAt: Date;
+    }[];
     replyTo: ObjectId;
     scheduledAt: Date;
-    sentAt: Date;
+    createdAt: Date;
+    updatedAt: Date;
     status: "pending" | "sent" | "delivered" | "seen" | "failed";
     deletedAt: Date;
 }

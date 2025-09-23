@@ -10,7 +10,7 @@ router.use(protect);
 router
     .route("/")
     .get(factory.getAll(DocumentModel, { currentUserOnly: true }))
-    .post(factory.createOne(DocumentModel));
+    .post(factory.createOne(DocumentModel, { userAsDocumentOwner: true }));
 
 router
     .route("/:id")

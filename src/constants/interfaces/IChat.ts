@@ -1,13 +1,12 @@
 import mongoose, { Document, ObjectId, Schema } from "mongoose";
 
-export interface IChat extends Document {
-    _id: ObjectId;
+export interface IChatDocument extends Document {
     type: "direct" | "group";
     name?: String;
     createdBy: ObjectId;
     members: [
         {
-            userId: ObjectId;
+            user: ObjectId;
             role: "member" | "admin" | "owner";
             joinedAt: Date;
             lastReadAt: Date;
@@ -19,6 +18,7 @@ export interface IChat extends Document {
         content: string;
         type: "text" | "image" | "video" | "file" | "system";
         sentAt: Date;
+        status: "pending" | "sent" | "delivered" | "seen" | "failed";
     } | null;
     createdAt: Date;
     updatedAt: Date;

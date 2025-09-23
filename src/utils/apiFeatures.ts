@@ -120,6 +120,7 @@ class APIFeatures<T extends Document> {
             const populateFields = this.queryString.populate
                 .split(",")
                 .join(" ");
+            console.log(populateFields);
             // @ts-expect-error: type widening from populate()
             this.query = this.query.populate(populateFields);
         }

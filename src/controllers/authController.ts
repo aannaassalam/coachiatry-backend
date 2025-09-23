@@ -28,19 +28,19 @@ const createSendToken = (
     message: string
 ) => {
     const token = signToken(user._id);
-    const cookieOptions: any = {
-        expires: new Date(
-            Date.now() +
-                (Number(process.env.JWT_COOKIE_EXPIRES_IN) || 7) *
-                    24 *
-                    60 *
-                    60 *
-                    1000
-        ),
-        httpOnly: true,
-    };
-    if (process.env.NODE_ENV === "production") cookieOptions.secure = true;
-    res.cookie("jwt", token, cookieOptions);
+    // const cookieOptions: any = {
+    //     expires: new Date(
+    //         Date.now() +
+    //             (Number(process.env.JWT_COOKIE_EXPIRES_IN) || 7) *
+    //                 24 *
+    //                 60 *
+    //                 60 *
+    //                 1000
+    //     ),
+    //     httpOnly: true,
+    // };
+    // if (process.env.NODE_ENV === "production") cookieOptions.secure = true;
+    // res.cookie("jwt", token, cookieOptions);
     user.password = undefined;
     sendResponse(res, statusCode, message, { token, user });
 };
@@ -48,12 +48,12 @@ const createSendToken = (
 export const signup = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const {
-            name,
+            fullName,
             email,
             phone,
             photo,
             password = null,
-            role,
+            role = "user",
             provider,
         } = req.body;
 
@@ -72,7 +72,7 @@ export const signup = catchAsync(
                 await sendEmail({
                     email,
                     subject: "Your System Generated Password",
-                    html: PASSWORD_HTML(name, finalPassword),
+                    html: PASSWORD_HTML(fullName, finalPassword),
                 });
             } catch (err) {
                 return next(
@@ -85,7 +85,7 @@ export const signup = catchAsync(
         }
 
         const newUser = await UserModel.create({
-            name,
+            fullName,
             email,
             password: finalPassword,
             photo,
@@ -289,11 +289,12 @@ export const updatePassword = catchAsync(
     async (req: any, res: Response, next: NextFunction) => {
         const user = await UserModel.findById(req.user.id).select("+password");
         if (
-            !user ||
-            !(await user.correctPassword(
-                req.body.passwordCurrent,
-                user.password
-            ))
+            !user
+            // ||
+            // !(await user.correctPassword(
+            //     req.body.passwordCurrent,
+            //     user.password
+            // ))
         ) {
             return next(
                 new AppError(
@@ -304,11 +305,6 @@ export const updatePassword = catchAsync(
         }
         user.password = req.body.password;
         await user.save();
-        createSendToken(
-            user,
-            StatusCodes.OK,
-            res,
-            "Password updates successfully!"
-        );
+        sendResponse(res, StatusCodes.OK, "Password updated successfully!");
     }
 );

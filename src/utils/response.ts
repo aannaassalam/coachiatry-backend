@@ -7,5 +7,6 @@ export const sendResponse = (
     data?: any
 ) => {
     res.set("X-Message", message);
+    res.set("Access-Control-Expose-Headers", "X-Message");
     res.status(status).json(data);
 };
