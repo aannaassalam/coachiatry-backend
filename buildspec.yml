@@ -1,0 +1,19 @@
+version: 0.2
+
+phases:
+    install:
+        commands:
+            - echo "Installing dependencies..."
+            - npm ci
+    build:
+        commands:
+            - echo "Compiling TypeScript..."
+            - npm run build
+artifacts:
+    files:
+        - build/**/*
+        - package.json
+        - package-lock.json
+        - Procfile
+        - .npmrc
+    discard-paths: no

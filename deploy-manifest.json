@@ -1,0 +1,23 @@
+{
+    "version": 1,
+    "framework": {
+        "name": "express",
+        "version": "4.19.2"
+    },
+    "routes": [
+        {
+            "path": "/*",
+            "target": {
+                "kind": "Compute",
+                "src": "default"
+            }
+        }
+    ],
+    "computeResources": [
+        {
+            "name": "default",
+            "runtime": "nodejs20.x",
+            "entrypoint": "index.js"
+        }
+    ]
+}
