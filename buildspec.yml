@@ -15,6 +15,7 @@ artifacts:
     files:
         # compiled app
         - build/**/*
+        - node_modules/**/*
         # package manager files
         - package.json
         - package-lock.json
