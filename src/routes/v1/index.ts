@@ -9,6 +9,7 @@ import uploadFileRouter from "./uploadFileRouter";
 
 const router = express.Router();
 
+router.get("/", (req, res) => res.send("API is running..."));
 router.use("/auth", authRouter);
 router.use("/user", userRouter);
 router.use("/transcriptions", transcriptionRouter);
