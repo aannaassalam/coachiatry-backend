@@ -1,0 +1,28 @@
+import express from "express";
+import { protect } from "../../controllers/authController";
+import { validateDocumentUpdate } from "../../utils/validator";
+import * as factory from "./../../controllers/handleFactory";
+import TaskModel from "../../model/taskModel";
+import {
+    updateSubtaskStatus,
+    updateTaskStatus,
+} from "../../controllers/taskController";
+
+const router = express.Router();
+router.use(protect);
+
+router
+    .route("/")
+    .get(factory.getAllUnpaginated(TaskModel, { currentUserOnly: true }))
+    .post(factory.createOne(TaskModel, { userAsDocumentOwner: true }));
+
+router.patch("/move-to-status/:id", updateTaskStatus);
+router.patch("/completed/:task_id/:subtask_id", updateSubtaskStatus);
+
+router
+    .route("/:id")
+    .get(factory.getOne(TaskModel))
+    .patch(factory.updateOne(TaskModel))
+    .delete(factory.deleteOne(TaskModel));
+
+export default router;

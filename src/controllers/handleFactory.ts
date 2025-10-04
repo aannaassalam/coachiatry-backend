@@ -24,6 +24,8 @@ interface CreateOptions extends Message {
 interface GetAllOptions extends Message {
     role?: string;
     currentUserOnly?: boolean;
+    additionalFilter?: object;
+    publicTypeFilter?: boolean;
 }
 
 export const deleteOne = (Model: Model<Document>, options?: Message) =>
@@ -112,11 +114,18 @@ export const getOne = (Model: Model<Document>, options?: Message) =>
 
 export const getAll = (Model: Model<Document>, options?: GetAllOptions) =>
     catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-        let filter = {};
+        let filter = options.additionalFilter ?? {};
         if (options?.role) filter = { role: options.role };
 
         if (options?.currentUserOnly && req.user) {
             filter = { ...filter, user: req.user._id };
+        }
+
+        if (options?.publicTypeFilter && req.user) {
+            filter = {
+                ...filter,
+                $or: [{ public: true }, { user: req.user._id }],
+            };
         }
 
         const features = new APIFeatures(Model.find(filter), req.query as any)
@@ -148,6 +157,41 @@ export const getAll = (Model: Model<Document>, options?: GetAllOptions) =>
             200,
             options?.message ?? `${Model.modelName} retrieved successfully`,
             responseData
+        );
+    });
+
+export const getAllUnpaginated = (
+    Model: Model<Document>,
+    options?: GetAllOptions
+) =>
+    catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+        let filter = options.additionalFilter ?? {};
+        if (options?.role) filter = { role: options.role };
+
+        if (options?.currentUserOnly && req.user) {
+            filter = { ...filter, user: req.user._id };
+        }
+
+        if (options?.publicTypeFilter && req.user) {
+            filter = {
+                ...filter,
+                $or: [{ public: true }, { user: req.user._id }],
+            };
+        }
+
+        const features = new APIFeatures(Model.find(filter), req.query as any)
+            .filter()
+            .sort()
+            .limitFields()
+            .search()
+            .populate();
+        const doc = await features.query;
+
+        sendResponse(
+            res,
+            200,
+            options?.message ?? `${Model.modelName} retrieved successfully`,
+            doc
         );
     });
 

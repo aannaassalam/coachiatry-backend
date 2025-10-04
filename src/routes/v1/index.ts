@@ -5,6 +5,9 @@ import transcriptionRouter from "./transcriptionRouter";
 import documentRouter from "./documentRouter";
 import chatRouter from "./chatRouter";
 import messageRouter from "./messageRouter";
+import categoryRouter from "./categoryRouter";
+import statusRouter from "./statusRouter";
+import taskRouter from "./taskRouter";
 import uploadFileRouter from "./uploadFileRouter";
 
 const router = express.Router();
@@ -16,6 +19,9 @@ router.use("/transcriptions", transcriptionRouter);
 router.use("/documents", documentRouter);
 router.use("/chat", chatRouter);
 router.use("/message", messageRouter);
+router.use("/categories", categoryRouter);
+router.use("/statuses", statusRouter);
+router.use("/task", taskRouter);
 // router.use('/uploads', uploadFileRouter);
 
 export default router;
