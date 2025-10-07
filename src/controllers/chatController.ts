@@ -4,6 +4,11 @@ import AppError from "../utils/appError";
 import catchAsync from "../utils/catchAsync";
 import { sendResponse } from "../utils/response";
 import { PipelineStage, Types } from "mongoose";
+import {
+    multipartComplete,
+    multiPartUrls,
+    startMultipartUpload,
+} from "../utils/aws";
 
 export const getAllConversations = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
@@ -255,5 +260,29 @@ export const getConversation = catchAsync(
             "Conversations retrieved successfully",
             conversation[0]
         );
+    }
+);
+
+export const startChatMultipartUpload = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const response = await startMultipartUpload(req.body);
+        return sendResponse(res, 200, "", response);
+    }
+);
+
+// 2️⃣ Get pre-signed URLs for each part
+export const chatPartUrls = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const response = await multiPartUrls(req.body);
+
+        return sendResponse(res, 200, "", { urls: response });
+    }
+);
+
+// 3️⃣ Complete upload
+export const chatUploadComplete = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const response = await multipartComplete(req.body);
+        return sendResponse(res, 200, "", { fileUrl: response });
     }
 );

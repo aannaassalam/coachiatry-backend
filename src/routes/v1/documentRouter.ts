@@ -15,6 +15,7 @@ router
 router
     .route("/:id")
     .get(factory.getOne(DocumentModel))
-    .patch(validateDocumentUpdate, factory.updateOne(DocumentModel));
+    .patch(validateDocumentUpdate, factory.updateOne(DocumentModel))
+    .delete(factory.deleteOne(DocumentModel));
 
 export default router;
