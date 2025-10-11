@@ -88,7 +88,7 @@ export const uploadDocumentToPublicAWS = catchAsync(
 );
 
 export const uploadAnyDocument = async (
-    fileBuffer: Uint8Array<ArrayBufferLike>,
+    fileBuffer: Uint8Array,
     fileName: string
 ) => {
     // Upload file to S3 bucket
