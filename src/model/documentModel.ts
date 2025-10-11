@@ -21,6 +21,9 @@ const documentSchema = new Schema<IDocument>(
             type: String,
             required: [true, "Please provide content for document!"],
         },
+        documentUrl: {
+            type: String,
+        },
         active: {
             type: Boolean,
             default: true,

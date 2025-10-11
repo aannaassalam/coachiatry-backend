@@ -3,6 +3,7 @@ import catchAsync from "./catchAsync";
 import {
     CompleteMultipartUploadCommand,
     CreateMultipartUploadCommand,
+    DeleteObjectCommand,
     PutObjectCommand,
     S3Client,
     UploadPartCommand,
@@ -26,7 +27,7 @@ const s3 = new S3Client({
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY as string, // Casting to string to avoid the undefined error
     },
 });
-const publicBucketName = process.env.AWS_PUBLIC_BUCKET_NAME; // Specify your bucket name
+const publicBucketName = process.env.AWS_BUCKET_NAME; // Specify your bucket name
 
 const generateUniqueId = (): string => {
     const characters =
@@ -85,6 +86,46 @@ export const uploadDocumentToPublicAWS = catchAsync(
         }
     }
 );
+
+export const uploadAnyDocument = async (
+    fileBuffer: Uint8Array<ArrayBufferLike>,
+    fileName: string
+) => {
+    // Upload file to S3 bucket
+    const params = {
+        Bucket: publicBucketName, // Replace with your bucket name
+        Key: `documents/${fileName}`,
+        Body: fileBuffer,
+    };
+
+    const command = new PutObjectCommand(params);
+
+    await s3.send(command);
+    // get public url for the uploaded file
+    const url = `https://${params.Bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/documents/${encodeURIComponent(fileName)}`;
+    return url;
+};
+
+export async function deleteS3File(url: string) {
+    try {
+        const key = url.replace(
+            `https://${publicBucketName}.s3.${process.env.AWS_REGION}.amazonaws.com/`,
+            ""
+        );
+
+        const command = new DeleteObjectCommand({
+            Bucket: publicBucketName,
+            Key: key,
+        });
+
+        await s3.send(command);
+        console.log(`🗑️ Deleted: s3://${publicBucketName}/${key}`);
+        return true;
+    } catch (error) {
+        console.error("❌ Failed to delete file from S3:", error);
+        return false;
+    }
+}
 
 export const startMultipartUpload = async ({
     fileName,

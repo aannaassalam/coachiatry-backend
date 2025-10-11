@@ -5,6 +5,7 @@ export interface IDocument extends Document {
     user: ObjectId;
     tag?: string;
     content: string;
+    documentUrl?: string;
     active: boolean;
     createdAt: Date;
     updatedAt: Date;

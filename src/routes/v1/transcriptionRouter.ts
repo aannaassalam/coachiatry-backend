@@ -11,7 +11,7 @@ router.use(protect);
 router
     .route("/")
     .get(factory.getAll(TranscriptionModel, { currentUserOnly: true }))
-    .post(factory.createOne(TranscriptionModel));
+    .post(factory.createOne(TranscriptionModel, { userAsDocumentOwner: true }));
 
 router.route("/:id").get(factory.getOne(TranscriptionModel));
 // .patch(validateUserUpdate, factory.updateOne(TranscriptionModel));
