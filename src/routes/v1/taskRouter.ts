@@ -4,6 +4,7 @@ import { validateDocumentUpdate } from "../../utils/validator";
 import * as factory from "./../../controllers/handleFactory";
 import TaskModel from "../../model/taskModel";
 import {
+    accessSharedTasks,
     updateSubtaskStatus,
     updateTaskStatus,
 } from "../../controllers/taskController";
@@ -18,6 +19,8 @@ router
 
 router.patch("/move-to-status/:id", updateTaskStatus);
 router.patch("/completed/:task_id/:subtask_id", updateSubtaskStatus);
+
+router.get("/shared/:shareId", accessSharedTasks);
 
 router
     .route("/:id")

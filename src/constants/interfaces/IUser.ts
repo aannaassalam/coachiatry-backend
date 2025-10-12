@@ -9,6 +9,8 @@ export interface IUserDocument extends Document {
     password: string | null;
     passwordResetToken: String;
     passwordResetExpires: Date;
+    shareId: string;
+    sharedViewers: string[];
     active: boolean;
     createdAt: Date;
     updatedAt: Date;

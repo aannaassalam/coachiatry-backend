@@ -1,9 +1,9 @@
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { NextFunction, Request, Response } from "express";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
-import { v4 as uuidv4 } from "uuid";
-import catchAsync from "../utils/catchAsync";
 import UserModel from "../model/userModel";
+import catchAsync from "../utils/catchAsync";
 import { sendResponse } from "../utils/response";
+import AppError from "../utils/appError";
 
 // Initialize S3 client
 const s3 = new S3Client({
@@ -14,11 +14,6 @@ const s3 = new S3Client({
     },
 });
 const publicBucketName = process.env.AWS_BUCKET_NAME || "";
-
-// Helper to generate unique IDs
-function generateUniqueId() {
-    return uuidv4();
-}
 
 // Controller to update user profile picture
 export const updateProfilePicture = catchAsync(
@@ -62,5 +57,57 @@ export const updateProfilePicture = catchAsync(
         });
 
         return sendResponse(res, 200, "Profile Picture updated Successfully");
+    }
+);
+
+export const addWatchersByLink = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { shareId } = req.params;
+        const currentUserId = req.user._id; // must be authenticated
+
+        const sharer = await UserModel.findOne({
+            shareId,
+        });
+        if (!sharer) throw new AppError("Invalid or inactive share link", 400);
+
+        // If viewer doesn’t exist in sharedViewers, add them
+        if (!sharer.sharedViewers.includes(currentUserId)) {
+            sharer.sharedViewers.push(currentUserId);
+            await sharer.save();
+        }
+
+        delete sharer._id;
+        delete sharer.id;
+        delete sharer.password;
+
+        sendResponse(res, 200, "Access Granted", sharer);
+    }
+);
+
+export const revokeViewerAccess = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const sharer = await UserModel.findById(req.user._id);
+        if (!sharer) throw new AppError("User not found", 404);
+
+        sharer.sharedViewers = sharer.sharedViewers.filter(
+            (v) => v.toString() !== req.params.viewerId
+        );
+
+        await sharer.save();
+        sendResponse(res, 200, "Access revoked successfully");
+    }
+);
+
+export const getAllWatching = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const userId = req.user?._id;
+
+        const users = await UserModel.find({ sharedViewers: userId }).select([
+            "shareId",
+            "fullName",
+            "photo",
+        ]);
+
+        sendResponse(res, 200, "Watching fetched", users);
     }
 );

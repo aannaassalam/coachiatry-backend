@@ -1,6 +1,11 @@
-import { Request, Response } from "express";
+import { NextFunction, Request, Response } from "express";
 import Task from "../model/taskModel";
 import catchAsync from "../utils/catchAsync";
+import APIFeatures from "../utils/apiFeatures";
+import TaskModel from "../model/taskModel";
+import { sendResponse } from "../utils/response";
+import UserModel from "../model/userModel";
+import AppError from "../utils/appError";
 
 export const updateTaskStatus = catchAsync(
     async (req: Request, res: Response) => {
@@ -57,5 +62,34 @@ export const updateSubtaskStatus = catchAsync(
                 error,
             });
         }
+    }
+);
+
+export const accessSharedTasks = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { shareId } = req.params;
+        const currentUserId = req.user._id;
+
+        const sharer = await UserModel.findOne({ shareId });
+
+        const isAuthorized = sharer.sharedViewers.includes(currentUserId);
+        if (!isAuthorized) {
+            throw new AppError("Access revoked or not granted", 403);
+        }
+
+        let filter = { user: sharer._id };
+
+        const features = new APIFeatures(
+            TaskModel.find(filter),
+            req.query as any
+        )
+            .filter()
+            .sort()
+            .limitFields()
+            .search()
+            .populate();
+        const doc = await features.query;
+
+        sendResponse(res, 200, "Tasks retrieved successfully", doc);
     }
 );

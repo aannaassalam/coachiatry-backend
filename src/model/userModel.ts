@@ -2,6 +2,7 @@ import mongoose, { Schema } from "mongoose";
 import validator from "validator";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+import { v4 as uuidv4 } from "uuid";
 
 import { IUserDocument } from "../constants/interfaces/IUser";
 import AppError from "../utils/appError";
@@ -49,6 +50,17 @@ const userSchema = new Schema<IUserDocument>(
         passwordResetExpires: {
             type: Date,
         },
+        shareId: {
+            type: String,
+            default: uuidv4,
+            unique: true,
+        },
+        sharedViewers: [
+            {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "User",
+            },
+        ],
         active: {
             type: Boolean,
             default: true,
