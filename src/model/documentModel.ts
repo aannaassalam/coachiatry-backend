@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+const { v4: uuidv4 } = require("uuid");
 
 import { IDocument } from "../constants/interfaces/IDocument";
 
@@ -14,16 +15,23 @@ const documentSchema = new Schema<IDocument>(
             ref: "User",
         },
         tag: {
-            type: String,
-            default: null,
+            type: mongoose.Types.ObjectId,
+            ref: "Category",
         },
         content: {
             type: String,
             required: [true, "Please provide content for document!"],
         },
-        documentUrl: {
+        shareId: {
             type: String,
+            default: uuidv4,
         },
+        sharedWith: [
+            {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "User",
+            },
+        ],
         active: {
             type: Boolean,
             default: true,

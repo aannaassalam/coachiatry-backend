@@ -1,6 +1,7 @@
 import mongoose, { Schema } from "mongoose";
 import validator from "validator";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 
 import { IUserDocument } from "../constants/interfaces/IUser";
 import AppError from "../utils/appError";
@@ -42,7 +43,12 @@ const userSchema = new Schema<IUserDocument>(
             minlength: 8,
             select: false,
         },
-
+        passwordResetToken: {
+            type: String,
+        },
+        passwordResetExpires: {
+            type: Date,
+        },
         active: {
             type: Boolean,
             default: true,
@@ -80,6 +86,21 @@ userSchema.methods.correctPassword = async function (
         );
     }
     return await bcrypt.compare(candidatePassword, userPassword);
+};
+
+userSchema.methods.createPasswordResetToken = function () {
+    const resetToken = crypto.randomBytes(32).toString("hex");
+
+    // Hash it before saving to DB (so it’s not readable if DB leaks)
+    this.passwordResetToken = crypto
+        .createHash("sha256")
+        .update(resetToken)
+        .digest("hex");
+
+    // Token valid for 3 hours
+    this.passwordResetExpires = Date.now() + 3 * 60 * 60 * 1000; // 3h in ms
+
+    return resetToken;
 };
 
 const UserModel = mongoose.model<IUserDocument>("User", userSchema);

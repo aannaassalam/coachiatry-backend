@@ -12,6 +12,16 @@ const categorySchema = new Schema<ICategory>(
             required: true,
             ref: "User",
         },
+        color: {
+            bg: {
+                type: String,
+                required: true,
+            },
+            text: {
+                type: String,
+                required: true,
+            },
+        },
         public: {
             type: Boolean,
             default: false,

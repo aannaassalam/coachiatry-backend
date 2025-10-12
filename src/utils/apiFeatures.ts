@@ -101,7 +101,6 @@ class APIFeatures<T extends Document> {
 
     filter() {
         const filteredQuery = this.excludeFieldsAndParseQuery();
-        console.log(filteredQuery);
         this.query = this.query.find(filteredQuery);
         return this;
     }

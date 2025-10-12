@@ -39,7 +39,7 @@ const userUpdateSchema = Joi.object({
 
 const documentUpdateSchema = Joi.object({
     title: Joi.string().min(2).max(50).trim().required(),
-    // tag: Joi.string().min(2).max(50).trim().required(),
+    tag: Joi.string().trim().required(),
     content: Joi.string().trim().required(),
 })
     .unknown(false)

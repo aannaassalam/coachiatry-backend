@@ -7,6 +7,8 @@ export interface IUserDocument extends Document {
     phone?: string;
     role: "user" | "coach";
     password: string | null;
+    passwordResetToken: String;
+    passwordResetExpires: Date;
     active: boolean;
     createdAt: Date;
     updatedAt: Date;
@@ -14,4 +16,5 @@ export interface IUserDocument extends Document {
         candidatePassword: string,
         userPassword: string
     ): Promise<boolean>;
+    createPasswordResetToken: () => string;
 }

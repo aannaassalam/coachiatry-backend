@@ -10,7 +10,7 @@ import { sendResponse } from "../utils/response";
 import { sendEmail, azureSendMail } from "../utils/email_sms";
 import {
     PASSWORD_HTML,
-    OTP_RESET_HTML,
+    RESET_LINK_HTML,
     WELCOME_EMAIL_HTML,
 } from "../constants/constants";
 // import sendEmail from '../utils/email_sms'; // Uncomment and implement as needed
@@ -94,15 +94,15 @@ export const signup = catchAsync(
         });
 
         // Send welcome email
-        // try {
-        //     await sendEmail({
-        //         email,
-        //         subject: 'Welcome to Coachiatry!',
-        //         html: WELCOME_EMAIL_HTML(name, newUser.role),
-        //     });
-        // } catch (err) {
-        //     console.warn('Failed to send welcome email:', err);
-        // }
+        try {
+            await sendEmail({
+                email,
+                subject: "Welcome to Coachiatry!",
+                html: WELCOME_EMAIL_HTML(fullName),
+            });
+        } catch (err) {
+            console.warn("Failed to send welcome email:", err);
+        }
 
         createSendToken(
             newUser,
@@ -208,24 +208,34 @@ export const restrictTo = (...roles: string[]) => {
 export const forgotPassword = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const user = await UserModel.findOne({ email: req.body.email });
+
         if (!user) {
             return next(
                 new AppError(
-                    "There is no user with email address",
+                    "There is no user with that email address",
                     StatusCodes.NOT_FOUND
                 )
             );
         }
-        // const resetOtp = user.createPasswordResetOtp();
-        // await user.save({ validateBeforeSave: false });
+
+        // 1️⃣ Generate reset token
+        const resetToken = user.createPasswordResetToken();
+        await user.save({ validateBeforeSave: false });
+
+        // 2️⃣ Create reset URL
+        const resetURL = `${process.env.CLIENT_URL}/auth/reset-password/${resetToken}`;
 
         try {
             await sendEmail({
                 email: user.email,
-                subject: "Your password reset OTP (valid for 10 min)",
-                html: OTP_RESET_HTML(user.fullName, ""),
+                subject: "Your password reset link (valid for 3 hours)",
+                html: RESET_LINK_HTML(user.fullName, resetURL),
             });
-            sendResponse(res, StatusCodes.OK, "OTP sent to email!");
+            sendResponse(
+                res,
+                StatusCodes.OK,
+                "Password reset link sent to your email!"
+            );
         } catch (err) {
             return next(
                 new AppError(
@@ -262,26 +272,36 @@ export const verifyOtp = catchAsync(
 
 export const resetPassword = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const { email, password } = req.body;
+        const { token, password } = req.body;
+
+        // 1️⃣ Hash the token before searching (since we stored it hashed)
+        const hashedToken = crypto
+            .createHash("sha256")
+            .update(token)
+            .digest("hex");
+
+        // 2️⃣ Find user with matching token and valid expiration
         const user = await UserModel.findOne({
-            email: email,
+            passwordResetToken: hashedToken,
+            passwordResetExpires: { $gt: Date.now() },
         });
+
         if (!user) {
             return next(
                 new AppError(
-                    "OTP is invalid or has expired",
+                    "Token is invalid or has expired",
                     StatusCodes.BAD_REQUEST
                 )
             );
         }
+
+        // 3️⃣ Set the new password and clear reset fields
         user.password = password;
+        user.passwordResetToken = undefined;
+        user.passwordResetExpires = undefined;
+
         await user.save();
-        createSendToken(
-            user,
-            StatusCodes.OK,
-            res,
-            "Password reset successfully!"
-        );
+        sendResponse(res, 200, "Password reset successfully!");
     }
 );
 

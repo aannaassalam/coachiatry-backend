@@ -1,62 +1,79 @@
 import { NextFunction, Request, Response } from "express";
-import catchAsync from "../utils/catchAsync";
 import DocumentModel from "../model/documentModel";
-import { sendResponse } from "../utils/response";
-import { generateMarkdownPDF } from "../utils";
 import AppError from "../utils/appError";
-import { deleteS3File } from "../utils/aws";
+import catchAsync from "../utils/catchAsync";
+import { sendResponse } from "../utils/response";
+import APIFeatures from "../utils/apiFeatures";
 
-export const addDocument = catchAsync(
+export const getAllDocuments = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const body = req.body;
-        body.user = req.user._id;
-        const doc = await DocumentModel.create(body);
+        let filter = {};
+        const { tab = "all" } = req.query;
+        const userId = req.user._id;
 
-        const url = await generateMarkdownPDF(
-            doc.content,
-            doc.title,
-            "Technology"
+        if (tab === "all") {
+            filter = {
+                $or: [{ user: userId }, { sharedWith: userId }],
+            };
+        }
+        if (tab === "my-docs") {
+            filter = {
+                user: userId,
+            };
+        }
+        if (tab === "shared") {
+            filter = { sharedWith: userId };
+        }
+
+        const features = new APIFeatures(
+            DocumentModel.find(filter),
+            req.query as any
+        )
+            .sort()
+            .limitFields()
+            .paginate()
+            .search()
+            .populate();
+        await features.calculateTotalCount();
+        const doc = await features.query;
+
+        const totalPages = Math.ceil(features.totalCount / features.limit);
+        const currentPage = parseInt(req.query.page as string, 10) || 1;
+
+        const responseData = {
+            data: doc,
+            meta: {
+                results: doc.length,
+                limit: features.limit,
+                currentPage,
+                totalPages,
+                totalCount: features.totalCount,
+            },
+        };
+
+        sendResponse(
+            res,
+            200,
+            "Documents retrieved successfully",
+            responseData
         );
-
-        doc.documentUrl = url;
-        await doc.save({ validateBeforeSave: true });
-
-        sendResponse(res, 201, "Document created successfully", doc);
     }
 );
 
-export const updateDocument = catchAsync(
+export const accessSharedDocument = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const doc = await DocumentModel.findByIdAndUpdate(
-            req.params.id,
-            req.body,
-            {
-                new: true,
-                runValidators: true,
-            }
-        );
-        if (!doc) {
-            return next(
-                new AppError(
-                    `No ${DocumentModel.modelName} found with that ID`,
-                    404
-                )
-            );
+        const { shareId } = req.params;
+        const userId = req.user._id; // user must be logged in
+
+        const document = await DocumentModel.findOne({ shareId });
+        if (!document) throw new AppError("Invalid share link", 404);
+
+        // Add this user to sharedWith if not already added
+        if (!document.sharedWith.includes(userId)) {
+            document.sharedWith.push(userId);
+            await document.save();
         }
 
-        if (doc.documentUrl) {
-            await deleteS3File(doc.documentUrl);
-        }
-
-        const url = await generateMarkdownPDF(
-            doc.content,
-            doc.title,
-            "Technology"
-        );
-
-        doc.documentUrl = url;
-        await doc.save({ validateBeforeSave: false });
-
-        sendResponse(res, 201, "Document updated successfully", doc);
+        sendResponse(res, 200, "Access Granted", document);
     }
 );

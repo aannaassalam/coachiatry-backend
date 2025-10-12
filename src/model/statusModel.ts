@@ -12,6 +12,16 @@ const statusSchema = new Schema<IStatus>(
             required: true,
             ref: "User",
         },
+        color: {
+            bg: {
+                type: String,
+                required: true,
+            },
+            text: {
+                type: String,
+                required: true,
+            },
+        },
         public: {
             type: Boolean,
             default: false,
