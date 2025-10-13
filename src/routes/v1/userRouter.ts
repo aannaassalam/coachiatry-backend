@@ -5,9 +5,11 @@ import UserModel from "../../model/userModel";
 import { validateUserUpdate } from "../../utils/validator";
 import * as factory from "./../../controllers/handleFactory";
 import {
+    addWatchersById,
     addWatchersByLink,
     getAllWatching,
     revokeViewerAccess,
+    suggestUsers,
     updateProfilePicture,
 } from "../../controllers/userController";
 
@@ -28,6 +30,9 @@ router.patch(
     upload.single("profilePicture"),
     updateProfilePicture
 );
+
+router.get("/suggestions", suggestUsers);
+router.post("/add-watchers", addWatchersById);
 
 router.get("/share/:shareId", addWatchersByLink);
 router.get("/get-all-watching", getAllWatching);

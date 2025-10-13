@@ -60,6 +60,20 @@ export const updateProfilePicture = catchAsync(
     }
 );
 
+export const suggestUsers = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { search = "" } = req.query;
+
+        const users = await UserModel.find({
+            email: { $regex: search, $options: "i" },
+        })
+            .select(["fullName", "photo", "email"])
+            .limit(5);
+
+        sendResponse(res, 200, "Suggestions fetched", users);
+    }
+);
+
 export const addWatchersByLink = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const { shareId } = req.params;
@@ -81,6 +95,19 @@ export const addWatchersByLink = catchAsync(
         delete sharer.password;
 
         sendResponse(res, 200, "Access Granted", sharer);
+    }
+);
+
+export const addWatchersById = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { userIds } = req.body;
+        const currentUser = req.user?._id;
+
+        await UserModel.findByIdAndUpdate(currentUser, {
+            $addToSet: { sharedViewers: { $each: userIds } },
+        });
+
+        sendResponse(res, 200, "Watchers added successfully!");
     }
 );
 
