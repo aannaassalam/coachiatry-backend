@@ -62,9 +62,11 @@ export const updateProfilePicture = catchAsync(
 
 export const suggestUsers = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
+        const currentUserId = req.user?._id;
         const { search = "" } = req.query;
 
         const users = await UserModel.find({
+            _id: { $ne: currentUserId },
             email: { $regex: search, $options: "i" },
         })
             .select(["fullName", "photo", "email"])
@@ -81,6 +83,9 @@ export const addWatchersByLink = catchAsync(
 
         const sharer = await UserModel.findOne({
             shareId,
+            _id: {
+                $ne: currentUserId,
+            },
         });
         if (!sharer) throw new AppError("Invalid or inactive share link", 400);
 

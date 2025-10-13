@@ -65,7 +65,10 @@ export const accessSharedDocument = catchAsync(
         const { shareId } = req.params;
         const userId = req.user._id; // user must be logged in
 
-        const document = await DocumentModel.findOne({ shareId });
+        const document = await DocumentModel.findOne({
+            shareId,
+            user: { $ne: userId },
+        });
         if (!document) throw new AppError("Invalid share link", 404);
 
         // Add this user to sharedWith if not already added
