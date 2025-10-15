@@ -32,6 +32,8 @@
     "@aws-sdk/s3-request-presigner": "^3.540.0",
     "@azure/communication-email": "^1.0.0",
     "@azure/storage-blob": "^12.27.0",
+    "@google/genai": "^1.25.0",
+    "@google/generative-ai": "^0.24.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/express-mongo-sanitize": "^2.1.0",
     "@types/hpp": "^0.2.6",
@@ -67,6 +69,7 @@
     "multer": "^1.4.5-lts.1",
     "node-cron": "^3.0.3",
     "nodemailer": "^6.9.11",
+    "openai": "^6.3.0",
     "pdf-lib": "^1.17.1",
     "pdfmake": "^0.2.12",
     "puppeteer": "^24.24.0",
@@ -84,6 +87,7 @@
     "uniqid": "^5.4.0",
     "uuidv4": "^6.2.13",
     "validator": "^13.11.0",
+    "xai": "^0.1.0",
     "xss": "^1.0.15"
   }
 }

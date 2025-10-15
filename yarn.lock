@@ -888,6 +888,19 @@
   resolved "https://registry.npmjs.org/@foliojs-fork/restructure/-/restructure-2.0.2.tgz"
   integrity sha512-59SgoZ3EXbkfSX7b63tsou/SDGzwUEK6MuB5sKqgVK1/XE0fxmpsOb9DQI8LXW3KfGnAjImCGhhEb7uPPAUVNA==
 
+"@google/genai@^1.25.0":
+  version "1.25.0"
+  resolved "https://registry.npmjs.org/@google/genai/-/genai-1.25.0.tgz"
+  integrity sha512-IBNyel/umavam98SQUfvQSvh/Rp6Ql2fysQLqPyWZr5K8d768X9AO+JZU4o+3qvFDUBA0dVYUSkxyYonVcICvA==
+  dependencies:
+    google-auth-library "^9.14.2"
+    ws "^8.18.0"
+
+"@google/generative-ai@^0.24.1":
+  version "0.24.1"
+  resolved "https://registry.npmjs.org/@google/generative-ai/-/generative-ai-0.24.1.tgz"
+  integrity sha512-MqO+MLfM6kjxcKoy0p1wRzG3b4ZZXtPI+z2IE26UogS2Cm/XHO+7gGRBh6gcJsOiIVoH93UwKvW4HdgiOZCy9Q==
+
 "@hapi/hoek@^9.0.0", "@hapi/hoek@^9.3.0":
   version "9.3.0"
   resolved "https://registry.npmjs.org/@hapi/hoek/-/hoek-9.3.0.tgz"
@@ -3247,10 +3260,10 @@ globby@^11.1.0:
     merge2 "^1.4.1"
     slash "^3.0.0"
 
-google-auth-library@^9.0.0:
-  version "9.6.3"
-  resolved "https://registry.npmjs.org/google-auth-library/-/google-auth-library-9.6.3.tgz"
-  integrity sha512-4CacM29MLC2eT9Cey5GDVK4Q8t+MMp8+OEdOaqD9MG6b0dOyLORaaeJMPQ7EESVgm/+z5EKYyFLxgzBJlJgyHQ==
+google-auth-library@^9.0.0, google-auth-library@^9.14.2:
+  version "9.15.1"
+  resolved "https://registry.npmjs.org/google-auth-library/-/google-auth-library-9.15.1.tgz"
+  integrity sha512-Jb6Z0+nvECVz+2lzSMt9u98UsoakXxA2HGHMCxh+so3n90XgYWkq5dur19JAJV7ONiJY22yBTyJB1TSkvPq9Ng==
   dependencies:
     base64-js "^1.3.0"
     ecdsa-sig-formatter "^1.0.11"
@@ -4151,6 +4164,11 @@ once@^1.3.0, once@^1.3.1, once@^1.4.0:
   integrity sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==
   dependencies:
     wrappy "1"
+
+openai@^6.3.0:
+  version "6.3.0"
+  resolved "https://registry.npmjs.org/openai/-/openai-6.3.0.tgz"
+  integrity sha512-E6vOGtZvdcb4yXQ5jXvDlUG599OhIkb/GjBLZXS+qk0HF+PJReIldEc9hM8Ft81vn+N6dRdFRb7BZNK8bbvXrw==
 
 optionator@^0.9.3:
   version "0.9.3"
@@ -5466,7 +5484,7 @@ wrappy@1:
   resolved "https://registry.npmjs.org/wrappy/-/wrappy-1.0.2.tgz"
   integrity sha512-l4Sp/DRseor9wL6EvV2+TuQn63dMkPjZ/sp9XkghTEbV9KlPS1xUsZ3u7/IQO4wxtcFB4bgpQPRcR3QCvezPcQ==
 
-ws@^8.18.3:
+ws@^8.18.0, ws@^8.18.3:
   version "8.18.3"
   resolved "https://registry.npmjs.org/ws/-/ws-8.18.3.tgz"
   integrity sha512-PEIGCY5tSlUt50cqyMXfCzX+oOPqN0vuGqWzbcJ2xvnkzkq46oOpz7dQaTDBdfICb4N14+GARUDw2XV2N4tvzg==
@@ -5475,6 +5493,11 @@ ws@~8.17.1:
   version "8.17.1"
   resolved "https://registry.npmjs.org/ws/-/ws-8.17.1.tgz"
   integrity sha512-6XQFvXTkbfUOZOKKILFG1PDK2NDQs4azKQl26T0YS5CxqWLgXajbPZ+h4gZekJyRqFU8pvnbAbbs/3TgRPy+GQ==
+
+xai@^0.1.0:
+  version "0.1.0"
+  resolved "https://registry.npmjs.org/xai/-/xai-0.1.0.tgz"
+  integrity sha512-F8gZJ8AW8392pe+h1wNO2ciN0CwJmNwTKd69IMkEm2R/42o4YqLbb7UyJwI53j9rVRl+ppjOlJ5pNgbnaOF6xA==
 
 xml2js@0.6.2:
   version "0.6.2"
@@ -5585,7 +5608,7 @@ yocto-queue@^0.1.0:
   resolved "https://registry.npmjs.org/yocto-queue/-/yocto-queue-0.1.0.tgz"
   integrity sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==
 
-zod@^3.24.1:
+zod@^3.24.1, "zod@^3.25 || ^4.0":
   version "3.25.76"
   resolved "https://registry.npmjs.org/zod/-/zod-3.25.76.tgz"
   integrity sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==
