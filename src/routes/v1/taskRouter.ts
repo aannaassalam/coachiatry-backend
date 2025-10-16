@@ -5,6 +5,7 @@ import * as factory from "./../../controllers/handleFactory";
 import TaskModel from "../../model/taskModel";
 import {
     accessSharedTasks,
+    importBulkTasks,
     updateSubtaskStatus,
     updateTaskStatus,
 } from "../../controllers/taskController";
@@ -27,5 +28,7 @@ router
     .get(factory.getOne(TaskModel))
     .patch(factory.updateOne(TaskModel))
     .delete(factory.deleteOne(TaskModel));
+
+router.post("/import-bulk-tasks", importBulkTasks);
 
 export default router;

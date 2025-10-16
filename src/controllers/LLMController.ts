@@ -80,10 +80,7 @@ Now classify the user's latest message accordingly.
                 .sort({ createdAt: -1 })
                 .lean();
         } else if (page === "chat") {
-            const chat = await ChatModel.findOne({
-                members: { $all: [userId, id] },
-            }).lean();
-            data = await MessageModel.find({ chat: chat._id })
+            data = await MessageModel.find({ chat: id })
                 .populate("sender")
                 .sort({ createdAt: -1 })
                 .lean();
@@ -108,28 +105,64 @@ Now classify the user's latest message accordingly.
         const createTasksDeclaration = {
             name: "create_tasks",
             description:
-                "Generate up to 10 structured tasks for the user and fill up priority category and status based on your observation, just make sure you take reference for category from categories list.",
+                "Generate up to 10 structured, actionable tasks for the user. Each task must include a temporary ID (tempId), title, description, priority, and a valid category object from the provided categories list.",
             parameters: {
                 type: "object",
                 properties: {
                     tasks: {
                         type: "array",
+                        description:
+                            "List of generated tasks. Each task must include category details from the provided category list and a unique temporary ID starting with 'tmp-'.",
                         items: {
                             type: "object",
                             properties: {
-                                title: { type: "string" },
-                                description: { type: "string" },
-                                category: {
+                                tempId: {
                                     type: "string",
                                     description:
-                                        "Mongo ObjectId from provided categories",
+                                        "Randomly generated temporary unique ID for frontend tracking (e.g., 'tmp-8392afc1'). Not a database ID.",
+                                },
+                                title: {
+                                    type: "string",
+                                    description:
+                                        "Short, descriptive task title.",
+                                },
+                                description: {
+                                    type: "string",
+                                    description:
+                                        "Detailed explanation or purpose of the task.",
                                 },
                                 priority: {
                                     type: "string",
                                     enum: ["low", "medium", "high"],
+                                    description:
+                                        "The urgency level of the task: low, medium, or high.",
+                                },
+                                category: {
+                                    type: "object",
+                                    description:
+                                        "Object containing the title and id of the chosen category. Must match one from the provided categories list.",
+                                    properties: {
+                                        title: {
+                                            type: "string",
+                                            description:
+                                                "Category title as defined in the provided categories list.",
+                                        },
+                                        id: {
+                                            type: "string",
+                                            description:
+                                                "MongoDB ObjectId of the category from the provided list. The field name must be exactly 'id' — do not rename or prefix it (e.g., not 'a_id', '_id', or 'categoryId').",
+                                        },
+                                    },
+                                    required: ["title", "id"],
                                 },
                             },
-                            required: ["title", "description", "priority"],
+                            required: [
+                                "tempId",
+                                "title",
+                                "description",
+                                "priority",
+                                "category",
+                            ],
                         },
                     },
                 },
@@ -140,24 +173,46 @@ Now classify the user's latest message accordingly.
         const createDocumentDeclaration = {
             name: "create_document",
             description:
-                "Generate a document object with title and HTML content",
+                "Generate a document object with a title, HTML-formatted content, and a tag object referencing a valid category from the provided categories list.",
             parameters: {
                 type: "object",
                 properties: {
-                    title: { type: "string" },
+                    title: {
+                        type: "string",
+                        description:
+                            "Concise, meaningful title for the document.",
+                    },
                     content: {
                         type: "string",
                         description:
-                            "HTML-formatted rich text for the document body",
+                            "Rich HTML-formatted body of the document (<h2>, <p>, <ul>, etc.).",
+                    },
+                    tag: {
+                        type: "object",
+                        description:
+                            "Object representing the document's category. Must reference an existing category from the provided list.",
+                        properties: {
+                            title: {
+                                type: "string",
+                                description:
+                                    "Category title chosen from the provided categories list.",
+                            },
+                            id: {
+                                type: "string",
+                                description:
+                                    "MongoDB ObjectId of the chosen category from the provided list. The field name must be exactly 'id' — do not rename or prefix it (e.g., not 'a_id', '_id', or 'categoryId').",
+                            },
+                        },
+                        required: ["title", "id"],
                     },
                 },
-                required: ["title", "content"],
+                required: ["title", "content", "tag"],
             },
         };
 
         // 3) decide tools/config (only when not summarize)
         const config: any | undefined =
-            String(action) === "summarize"
+            String(action ?? inferredAction) === "summarize"
                 ? undefined
                 : {
                       tools: [
@@ -172,8 +227,8 @@ Now classify the user's latest message accordingly.
                   };
 
         // 4) Compose prompt (system + user). Keep system short & concrete.
-        const systemPrompt = `
-You are an AI assistant inside a workspace app that helps users manage tasks, chats, and documents.
+        const systemPrompt =
+            `You are an AI assistant inside a workspace app that helps users manage tasks, chats, and documents.
 
 You can perform four actions:
 
@@ -183,34 +238,80 @@ You can perform four actions:
    - Be concise, accurate, and structured.
 
 2. **create_tasks** — Generate up to 10 structured, actionable tasks in JSON format.
-   - Use the Context data to infer what tasks are relevant.
-   - If the user provides no specific query, suggest tasks automatically based on recent activity, missing steps, or incomplete items in Context.
-   - Use provided categories when possible and set a logical priority (high, medium, low).
+   - Each task must strictly follow this exact structure:
+     {
+       "tempId": "tmp-xxxxxx",           // a random short unique temporary ID
+       "title": "Task title here",
+       "description": "Brief but clear description of the task.",
+       "priority": "high | medium | low",
+       "category": {
+         "title": "Category Title from provided list",
+         "id": "Matching category ID from provided list"
+       }
+     }
+   - Notes:
+     - 'tempId' is mandatory and must start with "tmp-" followed by random alphanumeric characters (e.g., "tmp-2b9a7c3f").
+     - The 'category' must be an **object** containing both 'title' and 'id' taken from the provided category list.
+     - Do **not** return category as a string or invent new categories or IDs.
+     - Choose the most suitable category based on the task’s purpose and context.
+     - Use the Context data to infer what tasks are relevant.
+     - If the user provides no specific query, suggest tasks automatically based on recent activity, missing steps, or incomplete items in Context.
 
 3. **create_document** — Generate a document object containing:
-   - A clear 'title'
-   - A detailed 'content' field in rich HTML (<h2>, <p>, <ul>).
-   - If the user provides no query, infer a useful document from the Context, such as a meeting summary, project overview, weekly report, or progress update.
-   - Use professional, concise language.
+   {
+     "title": "Document title here",
+     "tag": {
+       "title": "Category Title from provided list",
+       "id": "Matching category ID from provided list"
+     },
+     "content": "<h2>...</h2><p>...</p>"
+   }
+Notes:
 
-4. **chat** — Engage in normal conversation with the user.
-   - Used when the user is asking general questions, seeking clarification, or casually interacting.
-   - Respond naturally and conversationally.
-   - Do **not** produce structured data or formal JSON—just plain text or simple HTML.
-   - Default to 'chat' when the user’s intent is unclear.
+The 'tag' must be an object with both 'title' and 'id', taken strictly from the provided categories.
+
+Never create new categories or IDs.
+
+Choose the most contextually appropriate tag.
+
+If the user provides no query, infer a useful document from the Context (e.g., meeting summary, project overview, weekly report, progress update).
+Use professional, concise language with rich HTML formatting.
+
+chat — Engage in normal conversation with the user.
+
+Used when the user is asking general questions, seeking clarification, or casually interacting.
+
+Respond naturally and conversationally.
+
+Do not produce structured data or formal JSON—just plain text or simple HTML.
+
+Default to 'chat' when the user’s intent is unclear.
 
 Rules:
-- Context data comes directly from MongoDB — interpret it meaningfully.
-- Categories: ${JSON.stringify(categories || [])}
-- Only use category IDs listed above; do not invent new ones.
-- Never ask the user for more input; make the best assumption with what’s provided.
-- Always return structured data when required ('create_tasks' and 'create_document').
-- For 'chat' and 'summarize', return plain text or HTML output (not JSON).
 
-`.trim();
+Context data comes directly from MongoDB — interpret it meaningfully.
+
+Categories: ${JSON.stringify(categories || [])}
+
+Only use category IDs and titles from the list above. Never invent new ones.
+
+Never ask the user for more input; make the best assumption with what’s provided.
+
+Always return structured data when required ('create_tasks' and 'create_document') following the exact JSON structures shown above.
+
+For 'chat' and 'summarize', return plain text or HTML output (not JSON).
+
+Ensure categories/tags are contextually appropriate and consistent with the generated content.
+
+Every task must include a valid 'tempId' starting with "tmp-".
+
+
+IMPORTANT:
+- The property name for the category or tag ID must be exactly 'id'.
+- Do NOT output 'a_id', '_id', 'categoryId', or any variant.`.trim();
 
         const userPrompt = `
-Action: ${action || inferredAction}
+Action: ${action ?? inferredAction}
 User query: ${query && query.trim().length > 0 ? query : "(no user query provided — generate intelligent suggestions automatically)"}
 
 Context (raw Mongo JSON):
@@ -256,6 +357,9 @@ ${JSON.stringify(data, null, 2).slice(0, 20000)}
                 .filter(Boolean) ??
             [];
 
+        console.log(inferredAction);
+        console.log(JSON.stringify(response, null, 2));
+
         if (["summarize", "chat"].includes(String(action ?? inferredAction))) {
             res.set("X-Message", "");
             res.set("Access-Control-Expose-Headers", "X-Message");
@@ -266,47 +370,14 @@ ${JSON.stringify(data, null, 2).slice(0, 20000)}
         if (functionCalls && functionCalls.length > 0) {
             const fn = functionCalls[0];
             const args = fn.args ?? fn.arguments ?? {}; // some SDK variations use args vs arguments
-            // OPTIONAL: Validate args schema here before returning / saving.
-            // If autoSave = true, persist to DB (validate category IDs and fields).
-            // if (
-            //     autoSave &&
-            //     String(action) === "create_tasks" &&
-            //     Array.isArray(args.tasks)
-            // ) {
-            //     // validate each task and insert (example)
-            //     const toInsert = args.tasks.map((t: any) => ({
-            //         title: t.title,
-            //         description: t.description,
-            //         category:
-            //             t.category &&
-            //             categories.some(
-            //                 (c: any) => String(c._id) === String(t.category)
-            //             )
-            //                 ? t.category
-            //                 : undefined,
-            //         priority: ["low", "medium", "high"].includes(t.priority)
-            //             ? t.priority
-            //             : "medium",
-            //         owner: userId,
-            //     }));
-            //     // insertMany but be careful with schema & validation in production
-            //     await TaskModel.insertMany(toInsert);
-            // } else if (
-            //     autoSave &&
-            //     String(action) === "create_document" &&
-            //     args.title &&
-            //     args.content
-            // ) {
-            //     await DocumentModel.create({
-            //         title: args.title,
-            //         content: args.content,
-            //         owner: userId,
-            //     });
-            // }
+
             res.set("X-Message", "message");
             res.set("Access-Control-Expose-Headers", "X-Message");
             return res.json({
-                type: String(action) === "create_tasks" ? "tasks" : "document",
+                type:
+                    String(action ?? inferredAction) === "create_tasks"
+                        ? "tasks"
+                        : "document",
                 data: args,
             });
         }

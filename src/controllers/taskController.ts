@@ -93,3 +93,22 @@ export const accessSharedTasks = catchAsync(
         sendResponse(res, 200, "Tasks retrieved successfully", doc);
     }
 );
+
+export const importBulkTasks = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { tasks } = req.body;
+        const user = req.user?._id;
+
+        const processedTasks = tasks.map((_task) => {
+            return {
+                ..._task,
+                user,
+                status: "68deacdce9c648f5b606740c",
+            };
+        });
+
+        await TaskModel.insertMany(processedTasks);
+
+        sendResponse(res, 200, "Tasks imported successfully!");
+    }
+);
