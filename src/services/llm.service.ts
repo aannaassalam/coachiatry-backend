@@ -5,9 +5,12 @@ export const openai = new OpenAI({
 });
 
 export const getGeminiClient = async () => {
-    const { GoogleGenAI } = await import("@google/genai");
+    const { GoogleGenAI, Type } = await import("@google/genai");
 
-    return new GoogleGenAI({
-        apiKey: process.env.GEMINI_API_KEY!,
-    });
+    return {
+        ai: new GoogleGenAI({
+            apiKey: process.env.GEMINI_API_KEY!,
+        }),
+        Type,
+    };
 };
