@@ -4,9 +4,13 @@ import ChatModel from "../../model/chatModel";
 import { validateDocumentUpdate } from "../../utils/validator";
 import * as factory from "./../../controllers/handleFactory";
 import {
+    chatPartUrls,
+    chatUploadComplete,
     getAllConversations,
     getConversation,
+    startChatMultipartUpload,
 } from "../../controllers/chatController";
+import upload from "../../utils/multerConfig";
 
 const router = express.Router();
 router.use(protect);
@@ -14,6 +18,9 @@ router.use(protect);
 router.route("/").get(getAllConversations);
 
 router.route("/:roomId").get(getConversation);
-// .post(factory.createOne(ChatModel, { userAsDocumentOwner: true }));
+
+router.post("/upload/start", startChatMultipartUpload);
+router.post("/upload/parts", chatPartUrls);
+router.post("/upload/complete", chatUploadComplete);
 
 export default router;

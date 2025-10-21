@@ -265,24 +265,55 @@ export const getConversation = catchAsync(
 
 export const startChatMultipartUpload = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const response = await startMultipartUpload(req.body);
-        return sendResponse(res, 200, "", response);
+        const { fileName, fileType, chatId } = req.body;
+
+        if (!fileName || !fileType) {
+            return next(
+                new AppError("Missing fileName, fileType or path", 400)
+            );
+        }
+
+        const ext = fileName.split(".").pop();
+
+        const response = await startMultipartUpload({
+            fileName: `${fileName.replaceAll(`.${ext}`, "")}-${Date.now()}.${ext}`,
+            fileType,
+            path: `chat/${chatId}`, // sanitize
+        });
+
+        return sendResponse(res, 200, "Multipart upload started", {
+            uploadId: response.uploadId,
+            key: response.key,
+        });
     }
 );
 
-// 2️⃣ Get pre-signed URLs for each part
+// 2️⃣ Get pre-signed URLs for parts
 export const chatPartUrls = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const response = await multiPartUrls(req.body);
+        const { uploadId, key, parts } = req.body;
 
-        return sendResponse(res, 200, "", { urls: response });
+        if (!uploadId || !key || !Array.isArray(parts) || parts.length === 0) {
+            return next(new AppError("Missing uploadId, key, or parts[]", 400));
+        }
+
+        const urls = await multiPartUrls({ uploadId, key, parts });
+        return sendResponse(res, 200, "Presigned part URLs generated", {
+            urls,
+        });
     }
 );
 
 // 3️⃣ Complete upload
 export const chatUploadComplete = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const response = await multipartComplete(req.body);
-        return sendResponse(res, 200, "", { fileUrl: response });
+        const { uploadId, key, parts } = req.body;
+
+        if (!uploadId || !key || !Array.isArray(parts) || parts.length === 0) {
+            return next(new AppError("Missing uploadId, key, or parts[]", 400));
+        }
+
+        const fileUrl = await multipartComplete({ uploadId, key, parts });
+        return sendResponse(res, 200, "Upload complete", { fileUrl });
     }
 );

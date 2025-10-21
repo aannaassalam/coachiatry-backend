@@ -21,7 +21,6 @@ const messageSchema = new Schema<IMessageDocument>(
         },
         content: {
             type: String,
-            required: [true, "Please enter text before sending"],
         },
         files: [
             {
@@ -34,14 +33,14 @@ const messageSchema = new Schema<IMessageDocument>(
                     required: true,
                 },
                 size: {
-                    type: String,
+                    type: Number,
                     required: true,
                 },
                 thumbnailUrl: {
                     type: String,
                 },
                 duration: {
-                    type: String,
+                    type: Number,
                 },
             },
         ],

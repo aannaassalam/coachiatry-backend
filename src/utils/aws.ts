@@ -140,7 +140,6 @@ export const startMultipartUpload = async ({
         Bucket: process.env.AWS_BUCKET_NAME,
         Key: `${path}/${fileName}`,
         ContentType: fileType,
-        ACL: "public-read",
     });
 
     const { UploadId, Key } = await s3.send(command);
@@ -193,6 +192,6 @@ export const multipartComplete = async ({
     });
 
     await s3.send(command);
-    const fileURL = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
+    const fileURL = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${encodeURIComponent(key)}`;
     return fileURL;
 };
