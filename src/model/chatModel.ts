@@ -12,6 +12,9 @@ const chatSchema = new Schema<IChatDocument>(
         name: {
             type: String,
         },
+        groupPhoto: {
+            type: String,
+        },
         createdBy: {
             type: mongoose.Types.ObjectId,
             ref: "User",
@@ -31,7 +34,7 @@ const chatSchema = new Schema<IChatDocument>(
                 },
                 joinedAt: {
                     type: Date,
-                    required: true,
+                    default: Date.now,
                 },
                 lastReadAt: {
                     type: Date,

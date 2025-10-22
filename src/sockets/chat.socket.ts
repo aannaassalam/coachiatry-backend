@@ -13,7 +13,8 @@ export default (io: Server, socket: Socket) => {
         socket.data.userId = userId;
         console.log("🟢 User online:", userId);
 
-        const userObjectId = new mongoose.Types.ObjectId(userId);
+        const userObjectId =
+            mongoose.Types.ObjectId.createFromHexString(userId);
 
         const chats = await ChatModel.find({
             members: userObjectId,
@@ -38,17 +39,19 @@ export default (io: Server, socket: Socket) => {
     });
 
     // Join room
-    socket.on("join_room", ({ chatId, userId, friendId }) => {
+    socket.on("join_room", ({ chatId, userId, friendId, isGroup }) => {
         socket.join(chatId);
         socket.data.userId = userId;
         // console.log(`👥 ${userId} joined ${chatId}`);
 
         // Tell the current user if their friend is online
-        const isFriendOnline = onlineUsers.has(friendId);
-        socket.emit("user_status_update", {
-            userId: friendId,
-            status: isFriendOnline ? "online" : "offline",
-        });
+        if (!isGroup) {
+            const isFriendOnline = onlineUsers.has(friendId);
+            socket.emit("user_status_update", {
+                userId: friendId,
+                status: isFriendOnline ? "online" : "offline",
+            });
+        }
     });
 
     // Leave room
@@ -91,34 +94,112 @@ export default (io: Server, socket: Socket) => {
             tempId: data.tempId,
         });
 
-        const chat = await ChatModel.findById(data.chat).select("members");
-        if (chat) {
-            chat.members.forEach((memberId) => {
-                if (memberId.user.toString() !== data.sender.toString()) {
-                    const receiverSocket = Array.from(
-                        io.sockets.sockets.values()
-                    ).find((s) => s.data?.userId === memberId.user.toString());
-                    if (receiverSocket) {
-                        console.log("socket found", receiverSocket.id);
-                        receiverSocket.emit("new_message", populatedMessage);
-                    }
-                }
-            });
+        const chat = await ChatModel.findById(data.chat);
+
+        // if (chat?.type === "direct") {
+        //     const recipientSocket = Array.from(
+        //         io.sockets.sockets.values()
+        //     ).find(
+        //         (s) =>
+        //             s.data?.userId ===
+        //             chat.members
+        //                 .find((m) => m.user.toString() !== data.sender)
+        //                 ?.user.toString()
+        //     );
+
+        //     if (recipientSocket) {
+        //         populatedMessage.status = "delivered";
+        //         await populatedMessage.save();
+        //         recipientSocket.emit("new_message", populatedMessage);
+        //     }
+        // } else {
+        //     // group chat
+        //     for (const member of chat.members) {
+        //         if (member.user.toString() !== data.sender.toString()) {
+        //             const receiverSocket = Array.from(
+        //                 io.sockets.sockets.values()
+        //             ).find((s) => s.data?.userId === member.user.toString());
+        //             if (receiverSocket) {
+        //                 receiverSocket.emit("new_message", populatedMessage);
+        //             }
+        //         }
+        //     }
+        // }
+
+        const chatMembers = chat.members.map((m) => m.user.toString());
+
+        for (const memberId of chatMembers) {
+            // Don't notify the sender — they already know
+            if (memberId === data.sender.toString()) continue;
+
+            const socketId = onlineUsers.get(memberId);
+            console.log(socketId, memberId);
+            if (socketId) {
+                io.to(socketId).emit("conversation_updated", {
+                    chatId: chat._id,
+                    lastMessage: populatedMessage,
+                    updatedAt: new Date().toISOString(),
+                });
+            }
         }
     });
 
     socket.on("mark_seen", async ({ chatId, userId }) => {
-        const updated = await MessageModel.updateMany(
-            {
+        try {
+            const chat = await ChatModel.findById(chatId);
+            if (!chat) return;
+
+            const userObjectId = new mongoose.Types.ObjectId(userId);
+
+            // ✅ 1. Update lastReadAt for that user
+            await ChatModel.updateOne(
+                { _id: chatId, "members.user": userObjectId },
+                { $set: { "members.$.lastReadAt": new Date() } }
+            );
+
+            // ✅ 2. Find messages that are newer than user’s previous lastReadAt
+            const member = chat.members.find(
+                (m) => m.user.toString() === userId
+            );
+            const previousLastReadAt = member?.lastReadAt || new Date(0);
+
+            const unseenMessages = await MessageModel.find({
                 chat: chatId,
                 sender: { $ne: userId },
+                createdAt: { $gt: previousLastReadAt },
                 status: { $in: ["sent", "delivered"] },
-            },
-            { $set: { status: "seen" } }
-        );
+            }).select("_id");
 
-        if (updated.modifiedCount > 0) {
-            io.to(chatId).emit("message_seen_update_bulk", { chatId, userId });
+            if (unseenMessages.length > 0) {
+                // ✅ 3. Mark those messages as seen (globally)
+                // Note: this is simplistic — ideally you track seen per user in Message if you want group seen-by-lists
+                await MessageModel.updateMany(
+                    { _id: { $in: unseenMessages.map((m) => m._id) } },
+                    { $set: { status: "seen" } }
+                );
+
+                // ✅ 4. Emit updates to chat room and to others’ sockets
+                io.to(chatId).emit("message_seen_update_bulk", {
+                    chatId,
+                    userId,
+                    messageIds: unseenMessages.map((m) => m._id),
+                });
+            }
+
+            // ✅ 5. Optional: emit a conversation_updated so that other users’ chat lists can reflect “seen” state
+            // const onlineUsersMap = onlineUsers; // from your existing global map
+            // for (const member of chat.members) {
+            //     const socketId = onlineUsersMap.get(member.user.toString());
+            //     if (socketId && member.user.toString() !== userId) {
+            //         io.to(socketId).emit("conversation_updated", {
+            //             chatId: chat._id,
+            //             lastSeenBy: userId,
+            //             updatedAt: new Date().toISOString(),
+            //         });
+            //     }
+            // }
+        } catch (error) {
+            console.error("❌ mark_seen error:", error);
         }
     });
 

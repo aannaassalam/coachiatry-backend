@@ -3,6 +3,7 @@ import mongoose, { Document, ObjectId, Schema } from "mongoose";
 export interface IChatDocument extends Document {
     type: "direct" | "group";
     name?: String;
+    groupPhoto?: String;
     createdBy: ObjectId;
     members: [
         {
@@ -13,8 +14,8 @@ export interface IChatDocument extends Document {
         },
     ];
     lastMessage: {
-        messageId: ObjectId;
-        senderId: ObjectId;
+        message: ObjectId;
+        sender: ObjectId;
         content: string;
         type: "text" | "image" | "video" | "file" | "system";
         sentAt: Date;

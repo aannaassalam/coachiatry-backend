@@ -12,13 +12,10 @@ import {
     suggestUsers,
     updateProfilePicture,
 } from "../../controllers/userController";
+import upload from "../../utils/multerConfig";
 
 const router = express.Router();
 router.use(protect);
-
-// Multer setup with memory storage
-const storage = multer.memoryStorage();
-const upload = multer({ storage });
 
 router
     .route("/me")
