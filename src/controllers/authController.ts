@@ -8,12 +8,15 @@ import catchAsync from "../utils/catchAsync";
 import AppError from "../utils/appError";
 import { sendResponse } from "../utils/response";
 import { sendEmail, azureSendMail } from "../utils/email_sms";
+import { OAuth2Client } from "google-auth-library";
 import {
     PASSWORD_HTML,
     RESET_LINK_HTML,
     WELCOME_EMAIL_HTML,
 } from "../constants/constants";
 // import sendEmail from '../utils/email_sms'; // Uncomment and implement as needed
+
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 const signToken = (id: string) => {
     return jwt.sign({ id }, process.env.JWT_SECRET as string, {
@@ -127,6 +130,13 @@ export const login = catchAsync(
         const user = await UserModel.findOne({ email }).select("+password");
         user.updatedAt = new Date(); // Update the last updated time
         await user.save({ validateBeforeSave: false });
+        if (!user.password)
+            return next(
+                new AppError(
+                    "Please login using Google",
+                    StatusCodes.BAD_REQUEST
+                )
+            );
         if (!user || !(await user.correctPassword(password, user.password))) {
             return next(
                 new AppError(
@@ -135,6 +145,46 @@ export const login = catchAsync(
                 )
             );
         }
+        createSendToken(user, StatusCodes.OK, res, "Logged in Successfully!");
+    }
+);
+
+export const googleAuth = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { id_token } = req.body;
+
+        if (!id_token) {
+            return next(new AppError("Missing Google ID token", 400));
+        }
+
+        // Verify Google token
+        const ticket = await client.verifyIdToken({
+            idToken: id_token,
+            audience: process.env.GOOGLE_CLIENT_ID,
+        });
+
+        const payload = ticket.getPayload();
+        const email = payload?.email;
+        const fullName = payload?.name;
+        const photo = payload?.picture;
+
+        if (!email) {
+            return next(new AppError("Invalid Google token", 400));
+        }
+
+        // Check or create user in your DB
+        let user = await UserModel.findOne({ email });
+        if (!user) {
+            user = await UserModel.create({
+                email,
+                fullName,
+                photo,
+            });
+        }
+
+        delete user.password;
+
+        // Create your own app JWT (7 days)
         createSendToken(user, StatusCodes.OK, res, "Logged in Successfully!");
     }
 );
