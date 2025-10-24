@@ -8,6 +8,7 @@ import {
     addWatchersById,
     addWatchersByLink,
     getAllWatching,
+    getUsersById,
     revokeViewerAccess,
     suggestUsers,
     updateProfilePicture,
@@ -29,6 +30,7 @@ router.patch(
 );
 
 router.get("/suggestions", suggestUsers);
+router.get("/user-by-ids", getUsersById);
 router.post("/add-watchers", addWatchersById);
 
 router.get("/share/:shareId", addWatchersByLink);

@@ -4,6 +4,7 @@ export interface ITranscription {
     name: string;
     profile: string;
     text: string;
+    timestamp: Date;
 }
 
 export interface ITranscriptionDocument extends Document {

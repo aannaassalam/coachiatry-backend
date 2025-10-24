@@ -1,4 +1,4 @@
-import mongoose, { Document, Schema } from "mongoose";
+import mongoose, { Document, ObjectId, Schema } from "mongoose";
 
 export interface IUserDocument extends Document {
     fullName: string;
@@ -9,6 +9,7 @@ export interface IUserDocument extends Document {
     password: string | null;
     passwordResetToken: String;
     passwordResetExpires: Date;
+    assignedCoach: ObjectId;
     shareId: string;
     sharedViewers: string[];
     active: boolean;

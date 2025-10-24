@@ -38,6 +38,10 @@ const userSchema = new Schema<IUserDocument>(
             enum: ["user", "coach"],
             default: "user",
         },
+        assignedCoach: {
+            type: mongoose.Types.ObjectId,
+            ref: "User",
+        },
         password: {
             type: String,
             // required: [true, "please provide a password"],

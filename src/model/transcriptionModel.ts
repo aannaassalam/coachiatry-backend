@@ -27,6 +27,10 @@ const transcriptionSchema = new Schema<ITranscriptionDocument>(
                     type: String,
                     required: true,
                 },
+                timestamp: {
+                    type: Date,
+                    required: true,
+                },
             },
         ],
         active: {

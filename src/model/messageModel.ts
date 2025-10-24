@@ -67,6 +67,11 @@ const messageSchema = new Schema<IMessageDocument>(
             default: null,
         },
         scheduledAt: { type: Date },
+        repeat: {
+            type: String,
+            enum: ["none", "daily", "weekly", "monthly", "yearly"],
+            default: "none",
+        },
         status: {
             type: String,
             enum: ["pending", "sent", "delivered", "seen", "failed"],

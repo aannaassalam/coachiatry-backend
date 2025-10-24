@@ -1,17 +1,15 @@
-import { injectUserId } from "./../../controllers/authController";
+import { injectUserId, restrictTo } from "./../../controllers/authController";
 import express from "express";
 import { protect } from "../../controllers/authController";
 import TranscriptionModel from "../../model/transcriptionModel";
 import { validateUserUpdate } from "../../utils/validator";
 import * as factory from "./../../controllers/handleFactory";
+import { getClients } from "../../controllers/coachController";
 
 const router = express.Router();
 router.use(protect);
 
-router
-    .route("/")
-    .get(factory.getAll(TranscriptionModel, { currentUserOnly: true }))
-    .post(factory.createOne(TranscriptionModel, { userAsDocumentOwner: true }));
+router.get("/clients", restrictTo("coach"), getClients);
 
 router
     .route("/:id")

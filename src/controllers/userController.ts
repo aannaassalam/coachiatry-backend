@@ -4,6 +4,7 @@ import UserModel from "../model/userModel";
 import catchAsync from "../utils/catchAsync";
 import { sendResponse } from "../utils/response";
 import AppError from "../utils/appError";
+import ChatModel from "../model/chatModel";
 
 // Initialize S3 client
 const s3 = new S3Client({
@@ -60,6 +61,23 @@ export const updateProfilePicture = catchAsync(
     }
 );
 
+export const getUsersById = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { ids } = req.query;
+
+        const users = await UserModel.find(
+            {
+                _id: {
+                    $in: ids,
+                },
+            },
+            "_id fullName email photo"
+        );
+
+        sendResponse(res, 200, "User fetched by id", users);
+    }
+);
+
 export const suggestUsers = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const currentUserId = req.user?._id;
@@ -93,6 +111,15 @@ export const addWatchersByLink = catchAsync(
         if (!sharer.sharedViewers.includes(currentUserId)) {
             sharer.sharedViewers.push(currentUserId);
             await sharer.save();
+
+            await ChatModel.create({
+                members: [
+                    { user: sharer._id, role: "member" },
+                    { user: currentUserId, role: "member" },
+                ],
+                type: "direct",
+                createdBy: sharer._id,
+            });
         }
 
         delete sharer._id;
@@ -112,6 +139,17 @@ export const addWatchersById = catchAsync(
             $addToSet: { sharedViewers: { $each: userIds } },
         });
 
+        await ChatModel.insertMany(
+            userIds.map((id: string) => ({
+                members: [
+                    { user: currentUser, role: "member" },
+                    { user: id, role: "member" },
+                ],
+                type: "direct",
+                createdBy: currentUser,
+            }))
+        );
+
         sendResponse(res, 200, "Watchers added successfully!");
     }
 );
@@ -126,6 +164,13 @@ export const revokeViewerAccess = catchAsync(
         );
 
         await sharer.save();
+
+        await ChatModel.findOneAndDelete({
+            type: "direct",
+            createdBy: sharer._id,
+            "members.user": req.params.viewerId,
+        });
+
         sendResponse(res, 200, "Access revoked successfully");
     }
 );

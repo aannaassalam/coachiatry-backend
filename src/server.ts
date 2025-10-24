@@ -7,6 +7,9 @@ import app from "./app";
 import socket from "./config/socket.config";
 import http from "http";
 
+import "./utils/workers/messageWorker";
+import { messageQueue } from "./utils/queues/messageQueue";
+
 const PORT = process.env.PORT || 3001;
 
 // function errorHandler(

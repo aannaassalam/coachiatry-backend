@@ -20,6 +20,7 @@ export interface IMessageDocument extends Document {
     }[];
     replyTo: ObjectId;
     scheduledAt: Date;
+    repeat: "none" | "daily" | "weekly" | "monthly" | "yearly";
     createdAt: Date;
     updatedAt: Date;
     status: "pending" | "sent" | "delivered" | "seen" | "failed";

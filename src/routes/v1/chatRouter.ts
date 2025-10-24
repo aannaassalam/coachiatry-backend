@@ -13,6 +13,7 @@ import {
     startChatMultipartUpload,
 } from "../../controllers/chatController";
 import upload from "../../utils/multerConfig";
+import { getUsersById } from "../../controllers/userController";
 
 const router = express.Router();
 router.use(protect);

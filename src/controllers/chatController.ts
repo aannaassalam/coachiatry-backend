@@ -1,15 +1,15 @@
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { NextFunction, Request, Response } from "express";
+import { PipelineStage, Types } from "mongoose";
 import ChatModel from "../model/chatModel";
 import AppError from "../utils/appError";
-import catchAsync from "../utils/catchAsync";
-import { sendResponse } from "../utils/response";
-import mongoose, { PipelineStage, Types } from "mongoose";
 import {
     multipartComplete,
     multiPartUrls,
     startMultipartUpload,
 } from "../utils/aws";
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import catchAsync from "../utils/catchAsync";
+import { sendResponse } from "../utils/response";
 
 const s3 = new S3Client({
     region: process.env.AWS_REGION as string, // Ensuring that the region is of type string
@@ -54,7 +54,12 @@ export const getAllConversations = catchAsync(
                     from: "messages",
                     let: { chatId: "$_id" },
                     pipeline: [
-                        { $match: { $expr: { $eq: ["$chat", "$$chatId"] } } },
+                        {
+                            $match: {
+                                $expr: { $eq: ["$chat", "$$chatId"] },
+                                scheduledAt: null,
+                            },
+                        },
                         { $sort: { createdAt: -1 } },
                         { $limit: 1 },
                     ],
