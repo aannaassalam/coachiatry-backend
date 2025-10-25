@@ -1,4 +1,4 @@
-import { injectUserId } from "./../../controllers/authController";
+import { injectUserId, restrictTo } from "./../../controllers/authController";
 import express from "express";
 import { protect } from "../../controllers/authController";
 import TranscriptionModel from "../../model/transcriptionModel";
@@ -12,6 +12,14 @@ router
     .route("/")
     .get(factory.getAll(TranscriptionModel, { currentUserOnly: true }))
     .post(factory.createOne(TranscriptionModel, { userAsDocumentOwner: true }));
+
+router
+    .route("/coach")
+    .get(restrictTo("coach"), factory.getAll(TranscriptionModel));
+
+router
+    .route("/coach/:id")
+    .delete(restrictTo("coach"), factory.deleteOne(TranscriptionModel));
 
 router
     .route("/:id")

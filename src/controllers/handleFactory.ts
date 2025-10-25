@@ -26,6 +26,7 @@ interface GetAllOptions extends Message {
     currentUserOnly?: boolean;
     additionalFilter?: object;
     publicTypeFilter?: boolean;
+    coachTypeFilter?: boolean;
 }
 
 export const deleteOne = (Model: Model<Document>, options?: Message) =>
@@ -69,7 +70,7 @@ export const updateOne = (Model: Model<Document>, options?: Message) =>
 export const createOne = (Model: Model<Document>, options?: CreateOptions) =>
     catchAsync(async (req: Request, res: Response, next: NextFunction) => {
         const body = req.body;
-        if (options.userAsDocumentOwner) {
+        if (options?.userAsDocumentOwner) {
             body.user = req.user._id;
         }
         const doc = await Model.create(body);
@@ -114,7 +115,7 @@ export const getOne = (Model: Model<Document>, options?: Message) =>
 
 export const getAll = (Model: Model<Document>, options?: GetAllOptions) =>
     catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-        let filter = options.additionalFilter ?? {};
+        let filter = options?.additionalFilter ?? {};
         if (options?.role) filter = { role: options.role };
 
         if (options?.currentUserOnly && req.user) {
@@ -176,6 +177,13 @@ export const getAllUnpaginated = (
             filter = {
                 ...filter,
                 $or: [{ public: true }, { user: req.user._id }],
+            };
+        }
+
+        if (options?.coachTypeFilter && req.params?.userId) {
+            filter = {
+                ...filter,
+                $or: [{ public: true }, { user: req.params?.userId }],
             };
         }
 

@@ -1,3 +1,4 @@
+import { restrictTo } from "./../../controllers/authController";
 import express from "express";
 import { protect } from "../../controllers/authController";
 import { validateDocumentUpdate } from "../../utils/validator";
@@ -17,6 +18,11 @@ router
     .route("/")
     .get(factory.getAllUnpaginated(TaskModel, { currentUserOnly: true }))
     .post(factory.createOne(TaskModel, { userAsDocumentOwner: true }));
+
+router
+    .route("/coach")
+    .get(restrictTo("coach"), factory.getAllUnpaginated(TaskModel))
+    .post(restrictTo("coach"), factory.createOne(TaskModel));
 
 router.patch("/move-to-status/:id", updateTaskStatus);
 router.patch("/completed/:task_id/:subtask_id", updateSubtaskStatus);

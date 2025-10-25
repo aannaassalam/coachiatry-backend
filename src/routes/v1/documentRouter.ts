@@ -1,11 +1,12 @@
 import express from "express";
-import { protect } from "../../controllers/authController";
+import { protect, restrictTo } from "../../controllers/authController";
 import DocumentModel from "../../model/documentModel";
 import { validateDocumentUpdate } from "../../utils/validator";
 import * as factory from "./../../controllers/handleFactory";
 import {
     accessSharedDocument,
     getAllDocuments,
+    getAllDocumentsByCoach,
 } from "../../controllers/documentController";
 
 const router = express.Router();
@@ -15,6 +16,11 @@ router
     .route("/")
     .get(getAllDocuments)
     .post(factory.createOne(DocumentModel, { userAsDocumentOwner: true }));
+
+router
+    .route("/coach")
+    .get(restrictTo("coach"), getAllDocumentsByCoach)
+    .post(restrictTo("coach"), factory.createOne(DocumentModel));
 
 router
     .route("/:id")

@@ -1,3 +1,4 @@
+import { restrictTo } from "./../../controllers/authController";
 import express from "express";
 import { protect } from "../../controllers/authController";
 import ChatModel from "../../model/chatModel";
@@ -9,6 +10,7 @@ import {
     createGroup,
     editGroup,
     getAllConversations,
+    getAllConversationsByCoach,
     getConversation,
     startChatMultipartUpload,
 } from "../../controllers/chatController";
@@ -18,9 +20,9 @@ import { getUsersById } from "../../controllers/userController";
 const router = express.Router();
 router.use(protect);
 
-router.route("/").get(getAllConversations);
-
-router.route("/:roomId").get(getConversation);
+router.get("/", getAllConversations);
+router.get("/coach/:userId", restrictTo("coach"), getAllConversationsByCoach);
+router.get("/coach/room/:roomId", restrictTo("coach"), getConversation);
 
 router.post("/upload/start", startChatMultipartUpload);
 router.post("/upload/parts", chatPartUrls);
@@ -28,5 +30,7 @@ router.post("/upload/complete", chatUploadComplete);
 
 router.post("/group", upload.single("groupPhoto"), createGroup);
 router.post("/group/edit", upload.single("groupPhoto"), editGroup);
+
+router.get("/:roomId", getConversation);
 
 export default router;

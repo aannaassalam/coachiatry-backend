@@ -1,6 +1,6 @@
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { NextFunction, Request, Response } from "express";
-import { PipelineStage, Types } from "mongoose";
+import mongoose, { PipelineStage, Types } from "mongoose";
 import ChatModel from "../model/chatModel";
 import AppError from "../utils/appError";
 import {
@@ -278,6 +278,215 @@ export const getConversation = catchAsync(
             "Conversations retrieved successfully",
             conversation[0]
         );
+    }
+);
+
+export const getAllConversationsByCoach = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const userId = req.params.userId;
+        if (!userId) return next(new AppError("Unauthorized", 401));
+
+        const page = parseInt((req.query.page as string) || "1", 10);
+        const limit = parseInt((req.query.limit as string) || "20", 10);
+        const skip = (page - 1) * limit;
+
+        const pipeline: PipelineStage[] = [
+            // 1️⃣ Only chats where this user is a member
+            {
+                $match: {
+                    "members.user": Types.ObjectId.createFromHexString(userId),
+                },
+            },
+
+            // 2️⃣ Extract the current user's membership info
+            {
+                $addFields: {
+                    myData: {
+                        $first: {
+                            $filter: {
+                                input: "$members",
+                                as: "m",
+                                cond: {
+                                    $eq: [
+                                        "$$m.user",
+                                        Types.ObjectId.createFromHexString(
+                                            userId
+                                        ),
+                                    ],
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+
+            // 3️⃣ Lookup last message
+            {
+                $lookup: {
+                    from: "messages",
+                    let: { chatId: "$_id" },
+                    pipeline: [
+                        {
+                            $match: {
+                                $expr: { $eq: ["$chat", "$$chatId"] },
+                                scheduledAt: null,
+                            },
+                        },
+                        { $sort: { createdAt: -1 } },
+                        { $limit: 1 },
+                    ],
+                    as: "lastMessage",
+                },
+            },
+            {
+                $unwind: {
+                    path: "$lastMessage",
+                    preserveNullAndEmptyArrays: true,
+                },
+            },
+
+            // 4️⃣ Populate sender info
+            {
+                $lookup: {
+                    from: "users",
+                    localField: "lastMessage.sender",
+                    foreignField: "_id",
+                    as: "lastMessage.sender",
+                },
+            },
+            {
+                $unwind: {
+                    path: "$lastMessage.sender",
+                    preserveNullAndEmptyArrays: true,
+                },
+            },
+
+            // 5️⃣ Compute unread count
+            {
+                $lookup: {
+                    from: "messages",
+                    let: { chatId: "$_id", lastSeen: "$myData.lastReadAt" },
+                    pipeline: [
+                        {
+                            $match: {
+                                $expr: {
+                                    $and: [
+                                        { $eq: ["$chat", "$$chatId"] },
+                                        {
+                                            $ne: [
+                                                "$sender",
+                                                Types.ObjectId.createFromHexString(
+                                                    userId
+                                                ),
+                                            ],
+                                        },
+                                        {
+                                            $gt: [
+                                                "$createdAt",
+                                                {
+                                                    $ifNull: [
+                                                        "$$lastSeen",
+                                                        new Date(0),
+                                                    ],
+                                                },
+                                            ],
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        { $count: "unreadCount" },
+                    ],
+                    as: "unread",
+                },
+            },
+            {
+                $addFields: {
+                    unreadCount: {
+                        $ifNull: [
+                            { $arrayElemAt: ["$unread.unreadCount", 0] },
+                            0,
+                        ],
+                    },
+                },
+            },
+
+            // 6️⃣ Populate members with user data
+            {
+                $lookup: {
+                    from: "users",
+                    localField: "members.user",
+                    foreignField: "_id",
+                    as: "memberUsers",
+                },
+            },
+            {
+                $addFields: {
+                    members: {
+                        $map: {
+                            input: "$members",
+                            as: "m",
+                            in: {
+                                role: "$$m.role",
+                                joinedAt: "$$m.joinedAt",
+                                lastReadAt: "$$m.lastReadAt",
+                                user: {
+                                    $arrayElemAt: [
+                                        {
+                                            $filter: {
+                                                input: "$memberUsers",
+                                                as: "u",
+                                                cond: {
+                                                    $eq: [
+                                                        "$$u._id",
+                                                        "$$m.user",
+                                                    ],
+                                                },
+                                            },
+                                        },
+                                        0,
+                                    ],
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+            { $project: { memberUsers: 0, unread: 0, myData: 0 } },
+
+            // 7️⃣ Sort chats by recent activity
+            // {
+            //     $addFields: {
+            //         sortTimestamp: {
+            //             $ifNull: ["$lastMessage.createdAt", "$updatedAt"],
+            //         },
+            //     },
+            // },
+            { $sort: { "lastMessage.createdAt": -1 } },
+
+            // 8️⃣ Pagination
+            { $skip: skip },
+            { $limit: limit },
+        ];
+
+        const conversations = await ChatModel.aggregate(pipeline);
+
+        // ✅ Count total
+        const total = await ChatModel.countDocuments({
+            "members.user": userId,
+        });
+        const totalPages = Math.ceil(total / limit);
+
+        return sendResponse(res, 200, "Conversations retrieved successfully", {
+            data: conversations,
+            meta: {
+                results: conversations.length,
+                limit,
+                currentPage: page,
+                totalPages,
+                totalCount: total,
+            },
+        });
     }
 );
 

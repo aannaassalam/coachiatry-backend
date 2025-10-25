@@ -78,6 +78,19 @@ export const getUsersById = catchAsync(
     }
 );
 
+export const getUserById = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { userId } = req.params;
+
+        const users = await UserModel.findById(
+            userId,
+            "_id fullName email photo createdAt"
+        );
+
+        sendResponse(res, 200, "User fetched by id", users);
+    }
+);
+
 export const suggestUsers = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const currentUserId = req.user?._id;

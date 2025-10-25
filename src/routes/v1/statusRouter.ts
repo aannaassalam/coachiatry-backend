@@ -1,5 +1,5 @@
 import express from "express";
-import { protect } from "../../controllers/authController";
+import { protect, restrictTo } from "../../controllers/authController";
 import { validateDocumentUpdate } from "../../utils/validator";
 import * as factory from "./../../controllers/handleFactory";
 import StatusModel from "../../model/statusModel";
@@ -15,6 +15,16 @@ router
         })
     )
     .post(factory.createOne(StatusModel, { userAsDocumentOwner: true }));
+
+router
+    .route("/coach/:userId")
+    .get(
+        restrictTo("coach"),
+        factory.getAllUnpaginated(StatusModel, {
+            coachTypeFilter: true,
+        })
+    )
+    .post(restrictTo("coach"), factory.createOne(StatusModel));
 
 router
     .route("/:id")

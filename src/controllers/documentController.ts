@@ -60,6 +60,61 @@ export const getAllDocuments = catchAsync(
     }
 );
 
+export const getAllDocumentsByCoach = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        let filter = {};
+        const { tab = "all" } = req.query;
+        const userId = req.query.userId;
+
+        if (tab === "all") {
+            filter = {
+                $or: [{ user: userId }, { sharedWith: userId }],
+            };
+        }
+        if (tab === "my-docs") {
+            filter = {
+                user: userId,
+            };
+        }
+        if (tab === "shared") {
+            filter = { sharedWith: userId };
+        }
+
+        const features = new APIFeatures(
+            DocumentModel.find(filter),
+            req.query as any
+        )
+            .sort()
+            .limitFields()
+            .paginate()
+            .search()
+            .populate();
+        await features.calculateTotalCount();
+        const doc = await features.query;
+
+        const totalPages = Math.ceil(features.totalCount / features.limit);
+        const currentPage = parseInt(req.query.page as string, 10) || 1;
+
+        const responseData = {
+            data: doc,
+            meta: {
+                results: doc.length,
+                limit: features.limit,
+                currentPage,
+                totalPages,
+                totalCount: features.totalCount,
+            },
+        };
+
+        sendResponse(
+            res,
+            200,
+            "Documents retrieved successfully",
+            responseData
+        );
+    }
+);
+
 export const accessSharedDocument = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const { shareId } = req.params;

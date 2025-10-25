@@ -249,3 +249,88 @@ export const getScheduleMessages = catchAsync(
         );
     }
 );
+
+export const getScheduleMessagesByCoach = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const userId = req.params.userId;
+
+        const page = parseInt((req.query.page as string) || "1", 10);
+        const limit = parseInt((req.query.limit as string) || "20", 10);
+        const skip = (page - 1) * limit;
+
+        // pipeline
+        const pipeline: PipelineStage[] = [
+            // Only chats where this user is a member
+            {
+                $match: {
+                    sender: Types.ObjectId.createFromHexString(userId),
+                    scheduledAt: { $ne: null },
+                },
+            },
+
+            {
+                $lookup: {
+                    from: "users",
+                    localField: "sender",
+                    foreignField: "_id",
+                    as: "sender",
+                },
+            },
+            {
+                $unwind: {
+                    path: "$sender",
+                    preserveNullAndEmptyArrays: true,
+                },
+            },
+
+            {
+                $lookup: {
+                    from: "chats",
+                    localField: "chat",
+                    foreignField: "_id",
+                    as: "chat",
+                },
+            },
+            {
+                $unwind: {
+                    path: "$chat",
+                    preserveNullAndEmptyArrays: true,
+                },
+            },
+
+            // Sort by updatedAt / lastMessage
+            {
+                $sort: { createdAt: -1 },
+            },
+
+            // Pagination
+            { $skip: skip },
+            { $limit: limit },
+        ];
+
+        const messages = await MessageModel.aggregate(pipeline);
+
+        const total = await MessageModel.countDocuments({
+            sender: userId,
+            scheduledAt: { $ne: null },
+        });
+
+        const totalPages = Math.ceil(total / limit);
+
+        return sendResponse(
+            res,
+            200,
+            "Scheduled Messages retrieved successfully",
+            {
+                data: messages,
+                meta: {
+                    results: messages.length,
+                    limit,
+                    currentPage: page,
+                    totalPages,
+                    totalCount: total,
+                },
+            }
+        );
+    }
+);
