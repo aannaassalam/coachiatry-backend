@@ -47,8 +47,8 @@ const taskSchema = new Schema<ITaskDocument>(
         },
         frequency: {
             type: String,
-            enum: ["daily", "weekly", "monthly", "yearly"],
-            default: null,
+            enum: ["none", "daily", "weekly", "monthly", "yearly"],
+            default: "none",
         },
         remindBefore: {
             type: Number,

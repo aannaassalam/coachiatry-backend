@@ -15,7 +15,7 @@ export interface ITaskDocument extends Document {
     dueDate: Date;
     status: ObjectId;
     taskDuration?: number;
-    frequency?: "daily" | "weekly" | "monthly" | "yearly";
+    frequency?: "none" | "daily" | "weekly" | "monthly" | "yearly";
     remindBefore?: number;
     active: boolean;
     createdAt: Date;

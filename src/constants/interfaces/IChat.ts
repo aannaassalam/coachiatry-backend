@@ -21,6 +21,7 @@ export interface IChatDocument extends Document {
         sentAt: Date;
         status: "pending" | "sent" | "delivered" | "seen" | "failed";
     } | null;
+    isDeletable?: Boolean;
     createdAt: Date;
     updatedAt: Date;
 }

@@ -93,14 +93,22 @@ export const getUserById = catchAsync(
 
 export const suggestUsers = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const currentUserId = req.user?._id;
+        const currentUser = req.user;
         const { search = "" } = req.query;
 
+        const allowedUsers: string[] = [
+            ...currentUser.sharedViewers.map(String),
+        ];
+
+        if (currentUser.assignedCoach) {
+            allowedUsers.push(String(currentUser.assignedCoach));
+        }
+
         const users = await UserModel.find({
-            _id: { $ne: currentUserId },
+            _id: { $in: allowedUsers, $ne: currentUser?._id },
             email: { $regex: search, $options: "i" },
         })
-            .select(["fullName", "photo", "email"])
+            .select(["fullName", "photo", "email", "role"])
             .limit(5);
 
         sendResponse(res, 200, "Suggestions fetched", users);

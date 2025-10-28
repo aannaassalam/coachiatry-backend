@@ -8,7 +8,6 @@ function initSocket(server: HTTPServer) {
     io = new Server(server, {
         cors: { origin: "*" }, // configure properly in prod
     });
-    console.log("loaded new");
 
     io.on("connection", (socket) => {
         console.log("🔥 New client connected:", socket.id);

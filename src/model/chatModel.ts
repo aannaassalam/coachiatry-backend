@@ -58,6 +58,10 @@ const chatSchema = new Schema<IChatDocument>(
             },
             sentAt: { type: Date },
         },
+        isDeletable: {
+            type: Boolean,
+            default: true,
+        },
     },
     {
         timestamps: true,

@@ -14,6 +14,7 @@ import {
     RESET_LINK_HTML,
     WELCOME_EMAIL_HTML,
 } from "../constants/constants";
+import ChatModel from "../model/chatModel";
 // import sendEmail from '../utils/email_sms'; // Uncomment and implement as needed
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -94,6 +95,16 @@ export const signup = catchAsync(
             photo,
             phone,
             role,
+        });
+
+        await ChatModel.create({
+            createdBy: newUser._id,
+            type: "group",
+            name: "Coachiatry",
+            groupPhoto:
+                "https://coachiatry.s3.us-east-1.amazonaws.com/Logo+Mark+(1).png",
+            members: [{ user: newUser._id, role: "member" }],
+            isDeletable: false,
         });
 
         // Send welcome email
@@ -179,6 +190,16 @@ export const googleAuth = catchAsync(
                 email,
                 fullName,
                 photo,
+            });
+
+            await ChatModel.create({
+                createdBy: user._id,
+                type: "group",
+                name: "Coachiatry",
+                groupPhoto:
+                    "https://coachiatry.s3.us-east-1.amazonaws.com/Logo+Mark+(1).png",
+                members: [{ user: user._id, role: "member" }],
+                isDeletable: false,
             });
         }
 

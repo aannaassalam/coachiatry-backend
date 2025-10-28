@@ -1,14 +1,13 @@
 import "dotenv/config";
-import express, { NextFunction, Request, Response } from "express";
+import express, { Request, Response } from "express";
 
-import { RESPONSES } from "./constants/constants";
-import connectDb from "./config/db.config";
-import app from "./app";
-import socket from "./config/socket.config";
 import http from "http";
+import app from "./app";
+import connectDb from "./config/db.config";
+import socket from "./config/socket.config";
 
 import "./utils/workers/messageWorker";
-import { messageQueue } from "./utils/queues/messageQueue";
+import "./utils/workers/taskWorker";
 
 const PORT = process.env.PORT || 3001;
 
