@@ -8,6 +8,7 @@ import socket from "./config/socket.config";
 
 import "./utils/workers/messageWorker";
 import "./utils/workers/taskWorker";
+import { verifyRedisConnection } from "./utils/redis";
 
 const PORT = process.env.PORT || 3001;
 
@@ -33,6 +34,14 @@ async function bootstrap() {
             limit: "100mb",
         })
     );
+
+    verifyRedisConnection().then((success) => {
+        if (!success) {
+            console.warn(
+                "⚠ Redis is not reachable. App will continue without caching or sessions."
+            );
+        }
+    });
 
     // app.use(errorHandler)
 
