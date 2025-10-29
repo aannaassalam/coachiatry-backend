@@ -1,30 +1,29 @@
 import { sanitizeHtml } from "../utils/html";
 
 export function buildTasksHtml(taskList: any[]) {
+    console.log(JSON.stringify(taskList, null, 2));
     return taskList.length
-        ? `<div class="ai-results">${taskList
-              .map(
-                  (t) =>
-                      `<div class="ai-item"><a href="${t.url}">${sanitizeHtml(t.title)}</a> — ${sanitizeHtml(
-                          t.priority || ""
-                      )} ${t.category ? `• ${sanitizeHtml(t.category)}` : ""} ${
-                          t.dueDate
-                              ? `• due ${new Date(t.dueDate).toDateString()}`
-                              : ""
-                      }</div>`
-              )
-              .join("")}</div>`
+        ? `<div class="ai-results"><ol>
+        ${taskList
+            .map(
+                (t) =>
+                    `<li><div class="ai-item"><a href="${t.url}">${sanitizeHtml(t.title)}</a></div></li>`
+            )
+            .join("")}
+        </ol></div>`
         : `<p>No matching tasks found.</p>`;
 }
 
 export function buildDocumentsHtml(docList: any[]) {
     return docList.length
-        ? `<div class="ai-results">${docList
-              .map(
-                  (d) =>
-                      `<div class="ai-item"><a href="${d.url}">${sanitizeHtml(d.title)}</a> ${d.tag ? `— ${sanitizeHtml(d.tag)}` : ""}</div>`
-              )
-              .join("")}</div>`
+        ? `<div class="ai-results"><ol>
+        ${docList
+            .map(
+                (d) =>
+                    `<li><div class="ai-item"><a href="${d.url}">${sanitizeHtml(d.title)}</a></div></li>`
+            )
+            .join("")}
+        </ol></div>`
         : `<p>No matching documents found.</p>`;
 }
 

@@ -37,7 +37,7 @@ export async function buildContext(opts: {
         assignee: t.user?.name || t.assignee?.name || "",
         createdAt: t.createdAt,
         dueDate: t.dueDate || null,
-        url: `/task?task=${String(t._id)}`,
+        url: `/tasks?task=${String(t._id)}`,
     }));
 
     const documents = (documentsRaw || []).map((d: any) => ({

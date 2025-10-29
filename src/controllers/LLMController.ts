@@ -61,8 +61,6 @@ export const aiController = catchAsync(
         const { ai, Type } = await getGeminiClient();
         const userId = req.body.user ?? String(req.user?._id);
 
-        console.log(userId);
-
         // Page routing: default to general
         const page: PageKind = (
             (req.body.page as string) || "general"
@@ -74,8 +72,6 @@ export const aiController = catchAsync(
         // Session handling without DB
         const sessionId = getOrCreateSessionId(req);
         const session = await sessionStore.upsert(sessionId, userId);
-
-        console.log(sessionId);
 
         // Build page‑scoped workspace context
         const workspaceContext = await buildContext({ userId, page, id });
@@ -105,8 +101,6 @@ export const aiController = catchAsync(
             inferredAction = JSON.parse(intentText).action || "chat";
         } catch {}
         const chosenAction = String(explicitAction ?? inferredAction);
-
-        console.log(chosenAction);
 
         // Conversation grounding: include last turns from session
         const sessionTurns = session.turns.map((t) => ({
@@ -163,8 +157,6 @@ ${JSON.stringify(workspaceContext).slice(0, 20000)}
                 ?.map((p: any) => p.function_call)
                 .filter(Boolean) ||
             [];
-
-        console.log("responded");
 
         // Update session memory with the latest user query and assistant draft (best effort)
         if (query) sessionStore.appendTurn(sessionId, "user", query);
