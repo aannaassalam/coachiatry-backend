@@ -70,7 +70,7 @@ export async function buildContext(opts: {
     }
 
     if (page === "chat" && id) {
-        const messages = await MessageModel.find({ chat: id })
+        const messages = await MessageModel.find({ chat: id, type: "text" })
             .populate("sender")
             .sort({ createdAt: 1 })
             .lean();

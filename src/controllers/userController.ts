@@ -94,7 +94,7 @@ export const getUserById = catchAsync(
 export const suggestUsers = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const currentUser = req.user;
-        const { search = "" } = req.query;
+        const { search = "", type = "group" } = req.query;
 
         const allowedUsers: string[] = [
             ...currentUser.sharedViewers.map(String),
@@ -104,14 +104,24 @@ export const suggestUsers = catchAsync(
             allowedUsers.push(String(currentUser.assignedCoach));
         }
 
-        const users = await UserModel.find({
-            _id: { $in: allowedUsers, $ne: currentUser?._id },
-            email: { $regex: search, $options: "i" },
-        })
-            .select(["fullName", "photo", "email", "role"])
-            .limit(5);
+        if (type === "group") {
+            const users = await UserModel.find({
+                _id: { $in: allowedUsers, $ne: currentUser?._id },
+                email: { $regex: search, $options: "i" },
+            })
+                .select(["fullName", "photo", "email", "role"])
+                .limit(5);
 
-        sendResponse(res, 200, "Suggestions fetched", users);
+            sendResponse(res, 200, "Suggestions fetched", users);
+        } else {
+            const users = await UserModel.find({
+                _id: { $ne: currentUser?._id, $nin: allowedUsers },
+            })
+                .select(["fullName", "photo", "email", "role"])
+                .limit(5);
+
+            sendResponse(res, 200, "Suggestions fetched", users);
+        }
     }
 );
 
