@@ -15,6 +15,7 @@ export const createTask = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const body = req.body;
         body.user = req.user?._id;
+        body.assignedTo = req.user?._id;
         const doc = await TaskModel.create(body);
 
         if (doc.remindBefore) {
@@ -49,6 +50,24 @@ export const createTaskByCoach = catchAsync(
         }
 
         sendResponse(res, 201, `Task created successfully`, doc);
+    }
+);
+
+export const assignToCoach = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const user = req.user;
+        const { taskId } = req.body;
+
+        const task = await TaskModel.findById(taskId);
+
+        if (task.assignedTo.toString() === user._id.toString()) {
+            task.assignedTo = user.assignedCoach;
+        } else {
+            task.assignedTo = user._id;
+        }
+
+        await task.save();
+        sendResponse(res, 200, "Task executer changed successfully");
     }
 );
 
@@ -222,6 +241,7 @@ export const importBulkTasks = catchAsync(
             return {
                 ..._task,
                 user,
+                assignedTo: user,
                 status: "68deacdce9c648f5b606740c",
             };
         });

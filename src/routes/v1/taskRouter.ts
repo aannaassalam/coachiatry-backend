@@ -2,6 +2,7 @@ import express from "express";
 import { protect } from "../../controllers/authController";
 import {
     accessSharedTasks,
+    assignToCoach,
     createTask,
     createTaskByCoach,
     deleteTask,
@@ -27,6 +28,7 @@ router
     .get(restrictTo("coach"), factory.getAllUnpaginated(TaskModel))
     .post(createTaskByCoach);
 
+router.patch("/assign-toggle", assignToCoach);
 router.patch("/move-to-status/:id", updateTaskStatus);
 router.patch("/completed/:task_id/:subtask_id", updateSubtaskStatus);
 

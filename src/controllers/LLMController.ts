@@ -44,6 +44,15 @@ Workspace and ID usage:
 - Only use the provided IDs; never invent IDs.
 - When listing tasks or documents, include clickable <a> tags pointing to the provided URLs.
 
+Contextual behavior:
+- If the current page type is "chat" **and** a "focusedChat" object is provided, apply the following rules:
+  - All reasoning, summarization, and content generation must occur strictly within the context of that focused chat.
+  - Any task creation, document creation, or summarization must use only the information contained in the focused chat.
+  - Do not reference or rely on global workspace data beyond the focused chat when performing these actions.
+  - When creating a task or document from a focused chat, use only the relevant content of that chat as context. Do not infer, assume, or create information that is not explicitly present in the chat content.
+  - Never create or suggest any additional tasks, subtasks, or documents that are not directly supported by the focused chat context. All generated output must originate solely from the provided chat content.
+- If no "focusedChat" object is provided, ignore the above chat-specific restrictions and operate using the general workspace context.
+
 Tool usage expectations:
 - When asked to fetch any workspace data, call the fetch_data function.
 - When asked to create tasks or documents, call the respective function.
@@ -117,7 +126,7 @@ User query: ${query || "(no query provided)"}
 
 
 WorkspaceContext (compact):
-${JSON.stringify(workspaceContext).slice(0, 20000)}
+${JSON.stringify(workspaceContext).slice(0, 40000)}
 `.trim();
 
         const tools =
@@ -157,6 +166,8 @@ ${JSON.stringify(workspaceContext).slice(0, 20000)}
                 ?.map((p: any) => p.function_call)
                 .filter(Boolean) ||
             [];
+
+        console.log(textOutput, functionCalls);
 
         // Update session memory with the latest user query and assistant draft (best effort)
         if (query) sessionStore.appendTurn(sessionId, "user", query);

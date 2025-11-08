@@ -12,6 +12,7 @@ import {
     getAllConversations,
     getAllConversationsByCoach,
     getConversation,
+    leaveGroup,
     startChatMultipartUpload,
 } from "../../controllers/chatController";
 import upload from "../../utils/multerConfig";
@@ -30,6 +31,7 @@ router.post("/upload/complete", chatUploadComplete);
 
 router.post("/group", upload.single("groupPhoto"), createGroup);
 router.post("/group/edit", upload.single("groupPhoto"), editGroup);
+router.delete("/leave-group/:chatId", leaveGroup);
 
 router.get("/:roomId", getConversation);
 

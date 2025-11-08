@@ -78,8 +78,8 @@ export async function buildContext(opts: {
             id: String(id),
             messages: messages.map((m: any) => ({
                 id: String(m._id),
-                role: String(m.sender?._id) === userId ? "user" : "assistant",
-                text: m.text || m.content || "",
+                role: String(m.sender?._id) === userId ? "user" : "friend",
+                text: m.content || "",
                 createdAt: m.createdAt,
             })),
         };
@@ -92,6 +92,8 @@ export async function buildContext(opts: {
             totalCategories: (categories || []).length,
         },
         page,
+        focusDocument,
+        focusChat,
         categories: (categories || []).map((c: any) => ({
             id: String(c._id),
             title: c.title || c.name || "Untitled",
@@ -99,7 +101,5 @@ export async function buildContext(opts: {
         })),
         tasks,
         documents,
-        focusDocument,
-        focusChat,
     };
 }

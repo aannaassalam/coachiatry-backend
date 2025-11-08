@@ -564,22 +564,26 @@ export const createGroup = catchAsync(
             createdBy: userId,
         });
 
-        const ext = groupPhoto.originalname.split(".").pop();
-        const fileName = ext ? `${req.user?._id}.${ext}` : `${req.user?._id}`;
+        if (groupPhoto) {
+            const ext = groupPhoto.originalname.split(".").pop();
+            const fileName = ext
+                ? `${req.user?._id}.${ext}`
+                : `${req.user?._id}`;
 
-        const params = {
-            Bucket: publicBucketName,
-            Key: `profile/${fileName}`,
-            Body: groupPhoto.buffer,
-        };
+            const params = {
+                Bucket: publicBucketName,
+                Key: `profile/${fileName}`,
+                Body: groupPhoto.buffer,
+            };
 
-        const command = new PutObjectCommand(params);
-        await s3.send(command);
+            const command = new PutObjectCommand(params);
+            await s3.send(command);
 
-        const url = `https://${params.Bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${params.Key}`;
+            const url = `https://${params.Bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${params.Key}`;
 
-        group.groupPhoto = url;
-        await group.save();
+            group.groupPhoto = url;
+            await group.save();
+        }
 
         sendResponse(res, 200, "Group created successfully", group);
     }
@@ -662,5 +666,25 @@ export const editGroup = catchAsync(
         }
 
         sendResponse(res, 200, "Group edited successfully", group);
+    }
+);
+
+export const leaveGroup = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const userId = req.user?._id;
+        const { chatId } = req.params;
+
+        const currentGroup = await ChatModel.findById(chatId);
+        if (!currentGroup) {
+            throw new AppError("Group not found", 404);
+        }
+
+        const group = await ChatModel.findByIdAndUpdate(chatId, {
+            members: currentGroup.members.filter(
+                (m) => m.user.toString() !== userId.toString()
+            ),
+        });
+
+        sendResponse(res, 200, "Group left successfully", group);
     }
 );
