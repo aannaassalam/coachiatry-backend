@@ -116,6 +116,7 @@ export const suggestUsers = catchAsync(
         } else {
             const users = await UserModel.find({
                 _id: { $ne: currentUser?._id, $nin: allowedUsers },
+                email: { $regex: search, $options: "i" },
             })
                 .select(["fullName", "photo", "email", "role"])
                 .limit(5);
