@@ -35,7 +35,7 @@ export const createTask = catchAsync(
 
 export const createTaskByCoach = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const body = req.body;
+        const body = { ...req.body, assignedTo: req.body.user };
         const doc = await TaskModel.create(body);
 
         if (doc.remindBefore) {
