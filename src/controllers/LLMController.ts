@@ -20,6 +20,9 @@ import {
 } from "../ai/handlers";
 import TranscriptionModel from "../model/transcriptionModel";
 import CategoryModel from "../model/categoryModel";
+import { buildNativeTasksJson } from "../ai/native/buildNativeTasksJson";
+import { buildNativeDocumentsJson } from "../ai/native/buildNativeDocumentsJson";
+import { buildJsonText } from "../ai/native/jsonHelpers";
 
 // Small util: tmp id generator without external deps
 const makeTmpId = () =>
@@ -166,8 +169,6 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                 ?.map((p: any) => p.function_call)
                 .filter(Boolean) ||
             [];
-
-        console.log(textOutput, functionCalls);
 
         // Update session memory with the latest user query and assistant draft (best effort)
         if (query) sessionStore.appendTurn(sessionId, "user", query);
@@ -537,4 +538,296 @@ ${transcriptText}
     }
 );
 
-export default transcriptionAIController;
+const SYSTEM_NATIVE_GUIDE = `
+You are an AI assistant for a React Native application.
+
+You must output ONLY a JSON component tree with this schema:
+
+==============================
+=== ROOT JSON UI SCHEMA =====
+==============================
+
+A component is one of:
+
+{
+  "type": "view",
+  "style"?: { ... },
+  "children"?: Component[]
+}
+
+{
+  "type": "text",
+  "text": string,
+  "style"?: { ... }
+}
+
+{
+  "type": "button",
+  "label": string,
+  "action": string,
+  "taskId"?: string,
+  "documentId"?: string,
+  "style"?: { ... }
+}
+
+{
+  "type": "list",
+  "items": Component[]
+}
+
+{
+  "type": "task",
+  "id": string,
+  "title": string,
+  "status": string,
+  "priority": string
+}
+
+{
+  "type": "document",
+  "id": string,
+  "title": string
+}
+
+Rules:
+- NEVER output HTML.
+- NEVER output <p>, <ol>, <li>, <a> or any HTML tag.
+- NEVER output markdown or backticks.
+- NEVER wrap JSON in code fences.
+- Always output RAW JSON only.
+- Always build a valid component tree.
+- Use "text" for plain text.
+- Use "view" with children for grouping.
+- Use "list" for collections.
+- Use "task" and "document" nodes for items.
+- Use "button" only when user can take action.
+
+Context rules:
+- You have access to tasks, documents, categories, chats, focused chat, etc.
+- When asked to fetch data, call fetch_data tool.
+- When asked to create tasks, call create_tasks tool.
+- When asked to create documents, call create_document tool.
+- For chat/summarize, generate a JSON component tree representing the AI response visually.
+
+STRICT REQUIREMENT:
+❗ OUTPUT ONLY PLAIN JSON — NO TEXT, NO HTML, NO MARKDOWN, NO MARKUP.
+`.trim();
+
+export const aiNativeController = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { ai, Type } = await getGeminiClient();
+
+        const userId = req.body.user ?? String(req.user?._id);
+        const page: PageKind = (
+            (req.body.page as string) || "general"
+        ).toLowerCase() as PageKind;
+        const id = req.body.id as string | undefined;
+        const query = String(req.body.query || "");
+        const explicitAction = req.body.action as string | undefined;
+
+        // Session state
+        const sessionId = getOrCreateSessionId(req);
+        const session = await sessionStore.upsert(sessionId, userId);
+
+        // Load workspace context (tasks, docs, etc)
+        const workspaceContext = await buildContext({ userId, page, id });
+
+        // Detect intent
+        const intentResponse = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: [
+                {
+                    role: "user",
+                    parts: [
+                        { text: `${intentPrompt}\n\nUser query: ${query}` },
+                    ],
+                },
+            ],
+        });
+
+        const intentText =
+            (intentResponse as any).text ||
+            (intentResponse as any).candidates?.[0]?.content?.parts
+                ?.map((p: any) => p.text ?? "")
+                .join("") ||
+            '{ "action": "chat" }';
+
+        let inferredAction = "chat";
+        try {
+            inferredAction = JSON.parse(intentText).action || "chat";
+        } catch {}
+
+        const chosenAction = String(explicitAction ?? inferredAction);
+
+        const sessionTurns = session.turns.map((t) => ({
+            role: t.role,
+            text: t.text,
+        }));
+
+        const finalSystemPrompt = `
+${SYSTEM_NATIVE_GUIDE}
+
+Available categories: ${JSON.stringify(workspaceContext.categories)}
+`.trim();
+
+        const userPrompt = `
+Action: ${chosenAction}
+Page: ${page}
+Id: ${id ?? "(none)"}
+User query: ${query || "(no query provided)"}
+Platform: native
+
+WorkspaceContext:
+${JSON.stringify(workspaceContext).slice(0, 40000)}
+`;
+
+        const tools =
+            chosenAction === "summarize" || chosenAction === "chat"
+                ? undefined
+                : {
+                      tools: [
+                          { functionDeclarations: buildToolDeclarations(Type) },
+                      ],
+                  };
+
+        const contents: any[] = [
+            { role: "user", parts: [{ text: finalSystemPrompt }] },
+            ...sessionTurns.slice(-8).map((t) => ({
+                role: t.role,
+                parts: [{ text: t.text }],
+            })),
+            { role: "user", parts: [{ text: userPrompt }] },
+        ];
+
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents,
+            config: tools,
+        });
+
+        const textOutput: string =
+            typeof (response as any).text === "string"
+                ? (response as any).text
+                : (response as any).candidates?.[0]?.content?.parts
+                      ?.map((p: any) => p.text ?? "")
+                      .join("") || "";
+
+        const functionCalls =
+            (response as any).functionCalls ||
+            (response as any).candidates?.[0]?.content?.parts
+                ?.map((p: any) => p.function_call)
+                .filter(Boolean) ||
+            [];
+
+        // Save memory of this turn
+        if (query) sessionStore.appendTurn(sessionId, "user", query);
+
+        // ----------------------------------------------
+        // 📦 HANDLE TOOL CALLS (native version)
+        // ----------------------------------------------
+        if (functionCalls.length > 0) {
+            const fn = functionCalls[0];
+            let args = fn.args ?? fn.arguments ?? fn.payload ?? {};
+
+            if (typeof args === "string") {
+                try {
+                    args = JSON.parse(args);
+                } catch {
+                    args = {};
+                }
+            }
+
+            // FETCH DATA
+            if (fn.name === "fetch_data") {
+                const { type, filters = {} } = args;
+
+                if (type === "tasks") {
+                    let filtered = workspaceContext.tasks.slice();
+                    if (filters.priority)
+                        filtered = filtered.filter(
+                            (t: any) =>
+                                String(t.priority).toLowerCase() ===
+                                String(filters.priority).toLowerCase()
+                        );
+                    if (filters.status)
+                        filtered = filtered.filter(
+                            (t: any) =>
+                                String(t.status).toLowerCase() ===
+                                String(filters.status).toLowerCase()
+                        );
+                    if (filters.tag)
+                        filtered = filtered.filter(
+                            (t: any) =>
+                                String(t.category).toLowerCase() ===
+                                    String(filters.tag).toLowerCase() ||
+                                String(t.categoryId) === String(filters.tag)
+                        );
+
+                    const json = buildNativeTasksJson(filtered);
+
+                    sessionStore.appendTurn(
+                        sessionId,
+                        "model",
+                        JSON.stringify(json)
+                    );
+                    res.set("X-Session-Id", sessionId);
+                    res.set("Access-Control-Expose-Headers", "X-Session-Id");
+
+                    return res.json({ type: "json", data: json });
+                }
+
+                if (type === "documents") {
+                    let filtered = workspaceContext.documents.slice();
+
+                    const json = buildNativeDocumentsJson(filtered);
+
+                    sessionStore.appendTurn(
+                        sessionId,
+                        "model",
+                        JSON.stringify(json)
+                    );
+                    res.set("X-Session-Id", sessionId);
+                    res.set("Access-Control-Expose-Headers", "X-Session-Id");
+
+                    return res.json({ type: "json", data: json });
+                }
+            }
+
+            // CREATE TASKS
+            if (fn.name === "create_tasks") {
+                const tasks = Array.isArray(args.tasks) ? args.tasks : [];
+
+                return res.json({
+                    type: "tasks",
+                    data: { tasks },
+                });
+            }
+
+            // CREATE DOCUMENT
+            if (fn.name === "create_document") {
+                const doc = {
+                    title: args.title,
+                    content: args.content,
+                    tag: args.tag,
+                };
+                return res.json({ type: "document", data: doc });
+            }
+        }
+
+        // ----------------------------------------------
+        // 📦 FALLBACK: model must output native JSON
+        // ----------------------------------------------
+        let jsonOut;
+        try {
+            jsonOut = JSON.parse(textOutput);
+        } catch {
+            jsonOut = buildJsonText(textOutput);
+        }
+
+        sessionStore.appendTurn(sessionId, "model", JSON.stringify(jsonOut));
+        res.set("X-Session-Id", sessionId);
+        res.set("Access-Control-Expose-Headers", "X-Session-Id");
+
+        return res.json({ type: "json", data: jsonOut });
+    }
+);

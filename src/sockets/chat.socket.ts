@@ -133,7 +133,6 @@ export default (io: Server, socket: Socket) => {
             if (memberId === data.sender.toString()) continue;
 
             const socketId = onlineUsers.get(memberId);
-            console.log(socketId, memberId);
             if (socketId) {
                 io.to(socketId).emit("conversation_updated", {
                     chatId: chat._id,
