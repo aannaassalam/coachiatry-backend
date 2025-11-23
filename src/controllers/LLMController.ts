@@ -610,7 +610,7 @@ Context rules:
 - For chat/summarize, generate a JSON component tree representing the AI response visually.
 
 STRICT REQUIREMENT:
-❗ OUTPUT ONLY PLAIN JSON — NO TEXT, NO HTML, NO MARKDOWN, NO MARKUP, NO MARKUP JSON OR NESTED JSON WITH ${"```json <JSON DATA HERE> ```"}.
+❗ STRICTLY OUTPUT ONLY PLAIN JSON — NO TEXT, NO HTML, NO MARKDOWN, NO MARKUP, NO MARKUP JSON OR NESTED JSON WITH ${"```json <JSON DATA HERE> ```"}.
 `.trim();
 
 export const aiNativeController = catchAsync(
@@ -819,7 +819,9 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
         // ----------------------------------------------
         let jsonOut;
         try {
-            jsonOut = JSON.parse(textOutput);
+            jsonOut = JSON.parse(
+                textOutput.replaceAll("```json", "").replaceAll("```", "")
+            );
         } catch {
             jsonOut = buildJsonText(textOutput);
         }
