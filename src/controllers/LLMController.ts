@@ -609,6 +609,68 @@ Context rules:
 - When asked to create documents, call create_document tool.
 - For chat/summarize, generate a JSON component tree representing the AI response visually.
 
+==========================
+=== THEME + STYLING ======
+==========================
+
+You MUST style components using ONLY the following tokens:
+
+colors:
+- primary (#0E1734)
+- secondary (#F9F9F9)
+- text (#222222)
+- gray (#6b7280)
+- bg (#FFFFFF)
+- white (#FFFFFF)
+
+fonts:
+- Lato-Regular
+- Lato-Bold
+- Archivo-Medium
+- Archivo-SemiBold
+
+spacing:
+- xs = 4
+- sm = 8
+- md = 12
+- lg = 20
+- xl = 28
+
+radius:
+- sm = 6
+- md = 10
+- lg = 16
+
+Allowed style keys:
+- padding, paddingHorizontal, paddingVertical
+- margin, marginTop, marginBottom
+- gap, rowGap, columnGap
+- backgroundColor
+- color
+- borderRadius
+- fontFamily
+- fontSize
+- flexDirection ("column" or "row")
+- alignItems, justifyContent
+- width, height
+
+You may only use these style properties. Do NOT invent new properties.
+
+Styling guidelines:
+- Titles use fontFamily: "Archivo-SemiBold", fontSize: 18
+- Regular text uses fontFamily: "Lato-Regular", fontSize: 15
+- Buttons MUST use:
+  - backgroundColor: primary
+  - borderRadius: md
+  - paddingVertical: sm
+  - paddingHorizontal: md
+  - text inside: color white, fontFamily Lato-Bold
+- Views default to:
+  - paddingVertical: sm
+  - gap: sm
+
+This theme styling MUST be used consistently across all output.
+
 STRICT REQUIREMENT:
 ❗ STRICTLY OUTPUT ONLY PLAIN JSON — NO TEXT, NO HTML, NO MARKDOWN, NO MARKUP, NO MARKUP JSON OR NESTED JSON WITH ${"```json <JSON DATA HERE> ```"}.
 `.trim();
