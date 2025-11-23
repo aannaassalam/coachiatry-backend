@@ -541,40 +541,46 @@ ${transcriptText}
 const SYSTEM_NATIVE_GUIDE = `
 You are an AI assistant for a React Native application.
 
-You must output ONLY a JSON component tree with this schema:
+Your ONLY output is a JSON component tree following the schema below.
+You must NEVER output HTML, markdown, backticks, or code fences.
 
-==============================
-=== ROOT JSON UI SCHEMA =====
-==============================
+=====================================================
+=========== ROOT JSON UI COMPONENT SCHEMA ===========
+=====================================================
 
-A component is one of:
+A component is exactly one of:
 
+1) View (container)
 {
   "type": "view",
   "style"?: { ... },
   "children"?: Component[]
 }
 
+2) Text
 {
   "type": "text",
   "text": string,
   "style"?: { ... }
 }
 
+3) Button
 {
   "type": "button",
   "label": string,
   "action": string,
-  "taskId"?: string,
-  "documentId"?: string,
-  "style"?: { ... }
+  "style"?: { ... },
+  "document"?: { "title": string, "content": string, "tag": { "title": string, "id": string } },
+  "task"?: { ... }   // (future-proof)
 }
 
+4) List
 {
   "type": "list",
   "items": Component[]
 }
 
+5) Task node
 {
   "type": "task",
   "id": string,
@@ -583,63 +589,144 @@ A component is one of:
   "priority": string
 }
 
+6) Document node
 {
   "type": "document",
   "id": string,
   "title": string
 }
 
-Rules:
-- NEVER output HTML.
-- NEVER output <p>, <ol>, <li>, <a> or any HTML tag.
-- NEVER output markdown or backticks.
-- NEVER wrap JSON in code fences.
-- Always output RAW JSON only.
-- Always build a valid component tree.
-- Use "text" for plain text.
-- Use "view" with children for grouping.
-- Use "list" for collections.
-- Use "task" and "document" nodes for items.
-- Use "button" only when user can take action.
+=====================================================
+==================== GLOBAL RULES ===================
+=====================================================
 
-Context rules:
-- You have access to tasks, documents, categories, chats, focused chat, etc.
-- When asked to fetch data, call fetch_data tool.
-- When asked to create tasks, call create_tasks tool.
-- When asked to create documents, call create_document tool.
-- For chat/summarize, generate a JSON component tree representing the AI response visually.
+❌ Never output HTML inside the JSON tree
+❌ Never output <p>, <ol>, <li>, <a>, or any HTML tag
+❌ Never output Markdown or code fences
+❌ Never output escaped HTML
+✔ Only use RAW JSON objects
+✔ Always return a valid component tree
+✔ Use tool calls ONLY when required
 
-==========================
-=== THEME + STYLING ======
-==========================
+=========================================================
+===================== DOCUMENT CREATION =================
+=========================================================
 
-You MUST style components using ONLY the following tokens:
+You must follow ONE universal behavior:
 
-colors:
-- primary (#0E1734)
-- secondary (#F9F9F9)
-- text (#222222)
-- gray (#6b7280)
-- bg (#FFFFFF)
-- white (#FFFFFF)
+### ⭐ RULE — ANY document request MUST use:
 
-fonts:
-- Lato-Regular
-- Lato-Bold
-- Archivo-Medium
-- Archivo-SemiBold
+"action": "create_document"
 
-spacing:
-- xs = 4
-- sm = 8
-- md = 12
-- lg = 20
-- xl = 28
 
-radius:
-- sm = 6
-- md = 10
-- lg = 16
+This applies to ALL user intents:
+- “Create a document”
+- “Draft a document”
+- “Make a note”
+- “Make a write-up”
+- “Write an article”
+- “Create a PDF-like page”
+- “Draft something for me”
+- ANYTHING document-related → same action
+
+### ⭐ RULE — You MUST call the 'create_document' tool
+And generate:
+
+{
+  "title": "...",
+  "content": "<h2> ... VALID RAW HTML ... </h2>",
+  "tag": { "title": "...", "id": "CATEGORY_ID" }
+}
+
+💡 This HTML is ONLY inside the tool call.
+NEVER inside the UI JSON.
+
+### ⭐ RULE — After the tool call, you MUST output a JSON UI element:
+
+Example:
+{
+  "type": "button",
+  "label": "Open Document Draft",
+  "action": "create_document",
+  "document": {
+    "title": "...",
+    "content": "<h2>...</h2>",
+    "tag": { "title": "Work", "id": "123" }
+  },
+  "style": {
+    "backgroundColor": "primary",
+    "borderRadius": "md",
+    "paddingVertical": "sm",
+    "paddingHorizontal": "md"
+  }
+}
+
+User taps → You open your RN Document Editor with this data.
+
+### RATE LIMIT PROTECTION
+If user asks document creation multiple times in a conversation:
+- Do not merge documents
+- Do not reuse old drafts
+- Always generate a fresh 'create_document' tool call
+- Always output the button with document payload
+
+=========================================================
+======================== TASK CREATION ===================
+=========================================================
+
+Whenever user requests a task OR AI decides tasks are appropriate:
+- Use 'create_tasks' tool
+- Then output a JSON UI tree representing tasks
+
+Example:
+{
+  "type": "list",
+  "items": [
+    { "type": "task", "id": "tmp1", "title": "Buy milk", "status": "todo", "priority": "medium" }
+  ]
+}
+
+No HTML ever.
+
+=========================================================
+======================== SUMMARY MODE ====================
+=========================================================
+
+When action = "summarize":
+- Return a JSON UI tree ONLY
+- Use text and view nodes
+- No HTML
+- No tool calls
+
+=========================================================
+===================== THEMING + STYLING =================
+=========================================================
+
+Allowed colors:
+- primary: "#0E1734"
+- secondary: "#F9F9F9"
+- text: "#222222"
+- gray: "#6b7280"
+- bg: "#FFFFFF"
+- white: "#FFFFFF"
+
+Allowed fonts:
+- "Lato-Regular"
+- "Lato-Bold"
+- "Archivo-Medium"
+- "Archivo-SemiBold"
+
+Spacing tokens:
+- xs: 4
+- sm: 8
+- md: 12
+- lg: 20
+- xl: 28
+
+Radius tokens:
+- sm: 6
+- md: 10
+- lg: 16
 
 Allowed style keys:
 - padding, paddingHorizontal, paddingVertical
@@ -650,33 +737,42 @@ Allowed style keys:
 - borderRadius
 - fontFamily
 - fontSize
-- flexDirection ("column" or "row")
+- flexDirection ("row" or "column")
 - alignItems, justifyContent
 - width, height
 
-You may only use these style properties. Do NOT invent new properties.
+Button style MUST always be:
+{
+  "backgroundColor": "primary",
+  "borderRadius": "md",
+  "paddingVertical": "sm",
+  "paddingHorizontal": "md"
+}
+Button text MUST be:
+{
+  "color": "white",
+  "fontFamily": "Lato-Bold",
+  "fontSize": 15
+}
 
-Styling guidelines:
-- Titles use fontFamily: "Archivo-SemiBold", fontSize: 18
-- Regular text uses fontFamily: "Lato-Regular", fontSize: 15
-- Buttons MUST use:
-  - backgroundColor: primary
-  - borderRadius: md
-  - paddingVertical: sm
-  - paddingHorizontal: md
-  - text inside: color white, fontFamily Lato-Bold
-- Views default to:
-  - paddingVertical: sm
-  - gap: sm
+=========================================================
+==================== MODEL OUTPUT FORMAT =================
+=========================================================
 
-This theme styling MUST be used consistently across all output.
+You must always output:
 
-STRICT REQUIREMENT:
-❗ STRICTLY OUTPUT ONLY PLAIN JSON — NO TEXT, NO HTML, NO MARKDOWN, NO MARKUP, NO MARKUP JSON OR NESTED JSON WITH ${"```json <JSON DATA HERE> ```"}.
+1) If a tool call is needed → YOU CALL IT
+2) Then you output a JSON UI object following the rules
+
+Never output anything outside JSON.
+
+End of system.
+
+
 `.trim();
 
 export const aiNativeController = catchAsync(
-    async (req: Request, res: Response, next: NextFunction) => {
+    async (req: Request, res: Response) => {
         const { ai, Type } = await getGeminiClient();
 
         const userId = req.body.user ?? String(req.user?._id);
@@ -687,14 +783,14 @@ export const aiNativeController = catchAsync(
         const query = String(req.body.query || "");
         const explicitAction = req.body.action as string | undefined;
 
-        // Session state
+        // Session handling
         const sessionId = getOrCreateSessionId(req);
         const session = await sessionStore.upsert(sessionId, userId);
 
-        // Load workspace context (tasks, docs, etc)
+        // Workspace: tasks, docs, categories
         const workspaceContext = await buildContext({ userId, page, id });
 
-        // Detect intent
+        // INTENT DETECTION
         const intentResponse = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: [
@@ -712,39 +808,58 @@ export const aiNativeController = catchAsync(
             (intentResponse as any).candidates?.[0]?.content?.parts
                 ?.map((p: any) => p.text ?? "")
                 .join("") ||
-            '{ "action": "chat" }';
+            `{ "action": "chat" }`;
 
         let inferredAction = "chat";
         try {
             inferredAction = JSON.parse(intentText).action || "chat";
         } catch {}
 
+        // Decided action
         const chosenAction = String(explicitAction ?? inferredAction);
 
-        const sessionTurns = session.turns.map((t) => ({
-            role: t.role,
-            text: t.text,
-        }));
+        // Build SYSTEM PROMPT
+        let systemPrompt = SYSTEM_NATIVE_GUIDE;
+
+        // Force document creation mode
+        if (chosenAction === "create_document") {
+            systemPrompt += `
+IMPORTANT:
+You MUST call the create_document tool.
+AFTER calling it, you MUST output a JSON UI node:
+- type: "button"
+- action: "create_document"
+- document: { title, content, tag }
+HTML MUST ONLY appear inside the tool call's "content" field.
+NEVER inside JSON UI.
+`;
+        }
 
         const finalSystemPrompt = `
-${SYSTEM_NATIVE_GUIDE}
+${systemPrompt}
 
 Available categories: ${JSON.stringify(workspaceContext.categories)}
 `.trim();
+
+        const sessionTurns = session.turns.slice(-8).map((t) => ({
+            role: t.role,
+            parts: [{ text: t.text }],
+        }));
 
         const userPrompt = `
 Action: ${chosenAction}
 Page: ${page}
 Id: ${id ?? "(none)"}
-User query: ${query || "(no query provided)"}
 Platform: native
+
+User query: ${query || "(none)"}
 
 WorkspaceContext:
 ${JSON.stringify(workspaceContext).slice(0, 40000)}
-`;
+`.trim();
 
         const tools =
-            chosenAction === "summarize" || chosenAction === "chat"
+            chosenAction === "chat" || chosenAction === "summarize"
                 ? undefined
                 : {
                       tools: [
@@ -754,13 +869,11 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
 
         const contents: any[] = [
             { role: "user", parts: [{ text: finalSystemPrompt }] },
-            ...sessionTurns.slice(-8).map((t) => ({
-                role: t.role,
-                parts: [{ text: t.text }],
-            })),
+            ...sessionTurns,
             { role: "user", parts: [{ text: userPrompt }] },
         ];
 
+        // MODEL RESPONSE
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents,
@@ -781,12 +894,12 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                 .filter(Boolean) ||
             [];
 
-        // Save memory of this turn
+        // Save query to session
         if (query) sessionStore.appendTurn(sessionId, "user", query);
 
-        // ----------------------------------------------
-        // 📦 HANDLE TOOL CALLS (native version)
-        // ----------------------------------------------
+        // ------------------------------------------------------------
+        // TOOL CALL HANDLING
+        // ------------------------------------------------------------
         if (functionCalls.length > 0) {
             const fn = functionCalls[0];
             let args = fn.args ?? fn.arguments ?? fn.payload ?? {};
@@ -805,24 +918,19 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
 
                 if (type === "tasks") {
                     let filtered = workspaceContext.tasks.slice();
+
                     if (filters.priority)
                         filtered = filtered.filter(
                             (t: any) =>
                                 String(t.priority).toLowerCase() ===
                                 String(filters.priority).toLowerCase()
                         );
+
                     if (filters.status)
                         filtered = filtered.filter(
                             (t: any) =>
                                 String(t.status).toLowerCase() ===
                                 String(filters.status).toLowerCase()
-                        );
-                    if (filters.tag)
-                        filtered = filtered.filter(
-                            (t: any) =>
-                                String(t.category).toLowerCase() ===
-                                    String(filters.tag).toLowerCase() ||
-                                String(t.categoryId) === String(filters.tag)
                         );
 
                     const json = buildNativeTasksJson(filtered);
@@ -833,15 +941,12 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                         JSON.stringify(json)
                     );
                     res.set("X-Session-Id", sessionId);
-                    res.set("Access-Control-Expose-Headers", "X-Session-Id");
-
                     return res.json({ type: "json", data: json });
                 }
 
                 if (type === "documents") {
-                    let filtered = workspaceContext.documents.slice();
-
-                    const json = buildNativeDocumentsJson(filtered);
+                    const docs = workspaceContext.documents.slice();
+                    const json = buildNativeDocumentsJson(docs);
 
                     sessionStore.appendTurn(
                         sessionId,
@@ -849,49 +954,79 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                         JSON.stringify(json)
                     );
                     res.set("X-Session-Id", sessionId);
-                    res.set("Access-Control-Expose-Headers", "X-Session-Id");
-
                     return res.json({ type: "json", data: json });
                 }
             }
 
             // CREATE TASKS
             if (fn.name === "create_tasks") {
-                const tasks = Array.isArray(args.tasks) ? args.tasks : [];
-
                 return res.json({
                     type: "tasks",
-                    data: { tasks },
+                    data: {
+                        tasks: Array.isArray(args.tasks) ? args.tasks : [],
+                    },
                 });
             }
 
-            // CREATE DOCUMENT
+            // ------------------------------------------------------------
+            // CREATE DOCUMENT (MAIN CASE)
+            // ------------------------------------------------------------
             if (fn.name === "create_document") {
-                const doc = {
+                const document = {
                     title: args.title,
-                    content: args.content,
-                    tag: args.tag,
+                    content: args.content, // RAW HTML only here
+                    tag: {
+                        title: args.tag?.title,
+                        id: String(args.tag?.id),
+                    },
                 };
-                return res.json({ type: "document", data: doc });
+
+                // Return BOTH the tool output & the UI button node
+                return res.json({
+                    type: "json",
+                    data: {
+                        type: "button",
+                        label: "Open Draft Document",
+                        action: "create_document",
+                        document,
+                        style: {
+                            backgroundColor: "primary",
+                            borderRadius: 10,
+                            paddingVertical: 8,
+                            paddingHorizontal: 12,
+                        },
+                    },
+                });
             }
         }
 
-        // ----------------------------------------------
-        // 📦 FALLBACK: model must output native JSON
-        // ----------------------------------------------
+        // ------------------------------------------------------------
+        // FALLBACK: When model directly returns a JSON UI DSL
+        // ------------------------------------------------------------
         let jsonOut;
         try {
             jsonOut = JSON.parse(
                 textOutput.replaceAll("```json", "").replaceAll("```", "")
             );
         } catch {
-            jsonOut = buildJsonText(textOutput);
+            jsonOut = {
+                type: "view",
+                children: [
+                    {
+                        type: "text",
+                        text: textOutput,
+                        style: {
+                            fontFamily: "Lato-Regular",
+                            fontSize: 15,
+                            color: "text",
+                        },
+                    },
+                ],
+            };
         }
 
         sessionStore.appendTurn(sessionId, "model", JSON.stringify(jsonOut));
         res.set("X-Session-Id", sessionId);
-        res.set("Access-Control-Expose-Headers", "X-Session-Id");
-
         return res.json({ type: "json", data: jsonOut });
     }
 );
