@@ -571,7 +571,7 @@ A component is exactly one of:
   "action": string,
   "style"?: { ... },
   "document"?: { "title": string, "content": string, "tag": { "title": string, "id": string } },
-  "task"?: { ... }   // (future-proof)
+  "task"?: { ... }
 }
 
 4) List
@@ -614,36 +614,29 @@ A component is exactly one of:
 
 You must follow ONE universal behavior:
 
-### ⭐ RULE — ANY document request MUST use:
-
+### ⭐ RULE — ANY document request MUST ALWAYS use:
 "action": "create_document"
-
 
 This applies to ALL user intents:
 - “Create a document”
 - “Draft a document”
 - “Make a note”
-- “Make a write-up”
 - “Write an article”
-- “Create a PDF-like page”
-- “Draft something for me”
-- ANYTHING document-related → same action
+- “Draft something”
+- ANYTHING document-related → use "create_document"
 
 ### ⭐ RULE — You MUST call the 'create_document' tool
-And generate:
-
+The tool call MUST produce:
 {
   "title": "...",
   "content": "<h2> ... VALID RAW HTML ... </h2>",
   "tag": { "title": "...", "id": "CATEGORY_ID" }
 }
 
-💡 This HTML is ONLY inside the tool call.
-NEVER inside the UI JSON.
+HTML MUST appear ONLY inside the tool call’s content field.
 
 ### ⭐ RULE — After the tool call, you MUST output a JSON UI element:
 
-Example:
 {
   "type": "button",
   "label": "Open Document Draft",
@@ -661,42 +654,83 @@ Example:
   }
 }
 
-User taps → You open your RN Document Editor with this data.
+The user taps this button → React Native opens the editor with pre-filled data.
 
-### RATE LIMIT PROTECTION
-If user asks document creation multiple times in a conversation:
-- Do not merge documents
-- Do not reuse old drafts
-- Always generate a fresh 'create_document' tool call
-- Always output the button with document payload
+=========================================================
+============ CONTEXT-AWARE DOCUMENT TOPIC LOGIC =========
+=========================================================
+
+When the user requests a document **without specifying a topic**, you MUST:
+1. Read the conversation turn history
+2. Read the workspace context (tasks, documents, categories)
+3. Read the current page context (general, chat, document)
+4. Infer the MOST RELEVANT topic that benefits the user
+
+### Examples of context inference:
+- If the user is viewing a "Health" category page → generate a health-related document
+- If recent chat mentions “goals” or “planning” → generate a planning document
+- If the workspace has many tasks about “fitness” → generate a fitness guide
+- If user recently talked about “work” or “projects” → generate a work-focused document
+- If nothing relevant exists → generate a general-purpose helpful document (e.g., productivity tips)
+
+### ⭐ VERY IMPORTANT:
+❗ Do NOT hallucinate unrelated topics
+❗ The inferred topic MUST be justified by context
+❗ Never ask the user “what topic?” if context already provides enough clues
+❗ If the context is empty, generate a neutral, helpful document (e.g., “Daily Productivity Blueprint”)
 
 =========================================================
 ======================== TASK CREATION ===================
 =========================================================
 
-Whenever user requests a task OR AI decides tasks are appropriate:
+When user requests task creation:
 - Use 'create_tasks' tool
-- Then output a JSON UI tree representing tasks
-
-Example:
-{
-  "type": "list",
-  "items": [
-    { "type": "task", "id": "tmp1", "title": "Buy milk", "status": "todo", "priority": "medium" }
-  ]
-}
-
-No HTML ever.
+- Then output a JSON UI tree representing the list of created tasks
+- No HTML ever
 
 =========================================================
 ======================== SUMMARY MODE ====================
 =========================================================
 
 When action = "summarize":
-- Return a JSON UI tree ONLY
-- Use text and view nodes
-- No HTML
+- Return ONLY a JSON UI component tree
 - No tool calls
+- No HTML
+
+=========================================================
+===================== ID ACCURACY RULES =================
+=========================================================
+
+Whenever you output a task or document node from existing workspace data:
+
+1. You MUST use the EXACT ids provided in the workspaceContext.
+2. You MUST NOT invent, hallucinate, guess, or modify IDs.
+3. You MUST NOT generate temporary or random IDs for existing items.
+4. A task node MUST always be:
+
+{
+  "type": "task",
+  "id": REAL_TASK_ID,
+  "title": REAL_TITLE,
+  "status": REAL_STATUS,
+  "priority": REAL_PRIORITY
+}
+
+5. A document node MUST always be:
+
+{
+  "type": "document",
+  "id": REAL_DOCUMENT_ID,
+  "title": REAL_TITLE
+}
+
+6. When returning lists (via fetch_data or chat summaries):
+   - You MUST map each item exactly to the schema using real workspace values.
+   - Order must reflect the filtered workspace results unless instructed otherwise.
+
+7. NEVER fabricate new tasks or documents inside lists unless a tool call was used to generate them.
+
+These rules ensure your UI always matches real backend entities.
 
 =========================================================
 ===================== THEMING + STYLING =================
@@ -741,13 +775,14 @@ Allowed style keys:
 - alignItems, justifyContent
 - width, height
 
-Button style MUST always be:
+### Button styling (MANDATORY)
 {
   "backgroundColor": "primary",
   "borderRadius": "md",
   "paddingVertical": "sm",
   "paddingHorizontal": "md"
 }
+
 Button text MUST be:
 {
   "color": "white",
@@ -762,13 +797,11 @@ Button text MUST be:
 You must always output:
 
 1) If a tool call is needed → YOU CALL IT
-2) Then you output a JSON UI object following the rules
+2) THEN you output a JSON UI object representing the UI
 
 Never output anything outside JSON.
 
 End of system.
-
-
 `.trim();
 
 export const aiNativeController = catchAsync(
@@ -783,55 +816,66 @@ export const aiNativeController = catchAsync(
         const query = String(req.body.query || "");
         const explicitAction = req.body.action as string | undefined;
 
-        // Session handling
+        // ------------------------------------------------------------
+        // SESSION HANDLING
+        // ------------------------------------------------------------
         const sessionId = getOrCreateSessionId(req);
         const session = await sessionStore.upsert(sessionId, userId);
 
-        // Workspace: tasks, docs, categories
+        // ------------------------------------------------------------
+        // WORKSPACE (tasks, docs, categories)
+        // ------------------------------------------------------------
         const workspaceContext = await buildContext({ userId, page, id });
 
-        // INTENT DETECTION
-        const intentResponse = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: [
-                {
-                    role: "user",
-                    parts: [
-                        { text: `${intentPrompt}\n\nUser query: ${query}` },
-                    ],
-                },
-            ],
-        });
-
-        const intentText =
-            (intentResponse as any).text ||
-            (intentResponse as any).candidates?.[0]?.content?.parts
-                ?.map((p: any) => p.text ?? "")
-                .join("") ||
-            `{ "action": "chat" }`;
-
+        // ------------------------------------------------------------
+        // INTENT DETECTION (self-healing fallback)
+        // ------------------------------------------------------------
         let inferredAction = "chat";
-        try {
-            inferredAction = JSON.parse(intentText).action || "chat";
-        } catch {}
 
-        // Decided action
+        try {
+            const intentResponse = await ai.models.generateContent({
+                model: "gemini-2.5-flash",
+                contents: [
+                    {
+                        role: "user",
+                        parts: [
+                            { text: `${intentPrompt}\n\nUser query: ${query}` },
+                        ],
+                    },
+                ],
+            });
+
+            const intentText =
+                (intentResponse as any).text ||
+                (intentResponse as any).candidates?.[0]?.content?.parts
+                    ?.map((p: any) => p.text ?? "")
+                    .join("") ||
+                `{ "action": "chat" }`;
+
+            try {
+                inferredAction = JSON.parse(intentText).action || "chat";
+            } catch {
+                inferredAction = "chat";
+            }
+        } catch (err) {
+            inferredAction = "chat";
+        }
+
         const chosenAction = String(explicitAction ?? inferredAction);
 
-        // Build SYSTEM PROMPT
+        // ------------------------------------------------------------
+        // SYSTEM PROMPT
+        // ------------------------------------------------------------
         let systemPrompt = SYSTEM_NATIVE_GUIDE;
 
-        // Force document creation mode
+        // Force doc creation instructions
         if (chosenAction === "create_document") {
             systemPrompt += `
 IMPORTANT:
-You MUST call the create_document tool.
-AFTER calling it, you MUST output a JSON UI node:
-- type: "button"
-- action: "create_document"
-- document: { title, content, tag }
-HTML MUST ONLY appear inside the tool call's "content" field.
-NEVER inside JSON UI.
+You MUST:
+1) Call the create_document tool
+2) THEN output a JSON UI button using action: "create_document"
+HTML MUST APPEAR ONLY IN THE TOOL CALL CONTENT FIELD.
 `;
         }
 
@@ -851,7 +895,6 @@ Action: ${chosenAction}
 Page: ${page}
 Id: ${id ?? "(none)"}
 Platform: native
-
 User query: ${query || "(none)"}
 
 WorkspaceContext:
@@ -873,36 +916,63 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
             { role: "user", parts: [{ text: userPrompt }] },
         ];
 
-        // MODEL RESPONSE
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents,
-            config: tools,
-        });
+        // ------------------------------------------------------------
+        // SAFELY CALL THE MODEL
+        // ------------------------------------------------------------
+        let response: any = null;
+        try {
+            response = await ai.models.generateContent({
+                model: "gemini-2.5-flash",
+                contents,
+                config: tools,
+            });
+        } catch (err) {
+            // MODEL FAILURE → Return fallback UI
+            return res.json({
+                type: "json",
+                data: {
+                    type: "view",
+                    children: [
+                        {
+                            type: "text",
+                            text: "I couldn’t process that request. Please try again.",
+                            style: {
+                                fontFamily: "Lato-Regular",
+                                fontSize: 15,
+                                color: "gray",
+                            },
+                        },
+                    ],
+                },
+            });
+        }
 
+        // ------------------------------------------------------------
+        // SAFE MODEL TEXT EXTRACTION
+        // ------------------------------------------------------------
         const textOutput: string =
-            typeof (response as any).text === "string"
-                ? (response as any).text
-                : (response as any).candidates?.[0]?.content?.parts
+            typeof response?.text === "string"
+                ? response.text
+                : response?.candidates?.[0]?.content?.parts
                       ?.map((p: any) => p.text ?? "")
                       .join("") || "";
 
         const functionCalls =
-            (response as any).functionCalls ||
-            (response as any).candidates?.[0]?.content?.parts
+            response?.functionCalls ||
+            response?.candidates?.[0]?.content?.parts
                 ?.map((p: any) => p.function_call)
                 .filter(Boolean) ||
             [];
 
-        // Save query to session
+        // Save query in session
         if (query) sessionStore.appendTurn(sessionId, "user", query);
 
         // ------------------------------------------------------------
-        // TOOL CALL HANDLING
+        // TOOL CALLS
         // ------------------------------------------------------------
         if (functionCalls.length > 0) {
             const fn = functionCalls[0];
-            let args = fn.args ?? fn.arguments ?? fn.payload ?? {};
+            let args: any = fn.args ?? fn.arguments ?? fn.payload ?? {};
 
             if (typeof args === "string") {
                 try {
@@ -912,26 +982,29 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                 }
             }
 
-            // FETCH DATA
+            // ================================
+            // FETCH TASKS
+            // ================================
             if (fn.name === "fetch_data") {
                 const { type, filters = {} } = args;
 
                 if (type === "tasks") {
                     let filtered = workspaceContext.tasks.slice();
 
-                    if (filters.priority)
+                    if (filters.priority) {
                         filtered = filtered.filter(
                             (t: any) =>
                                 String(t.priority).toLowerCase() ===
                                 String(filters.priority).toLowerCase()
                         );
-
-                    if (filters.status)
+                    }
+                    if (filters.status) {
                         filtered = filtered.filter(
                             (t: any) =>
                                 String(t.status).toLowerCase() ===
                                 String(filters.status).toLowerCase()
                         );
+                    }
 
                     const json = buildNativeTasksJson(filtered);
 
@@ -940,7 +1013,6 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                         "model",
                         JSON.stringify(json)
                     );
-                    res.set("X-Session-Id", sessionId);
                     return res.json({ type: "json", data: json });
                 }
 
@@ -953,12 +1025,13 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                         "model",
                         JSON.stringify(json)
                     );
-                    res.set("X-Session-Id", sessionId);
                     return res.json({ type: "json", data: json });
                 }
             }
 
+            // ================================
             // CREATE TASKS
+            // ================================
             if (fn.name === "create_tasks") {
                 return res.json({
                     type: "tasks",
@@ -968,42 +1041,62 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                 });
             }
 
-            // ------------------------------------------------------------
-            // CREATE DOCUMENT (MAIN CASE)
-            // ------------------------------------------------------------
+            // ================================
+            // CREATE DOCUMENT
+            // ================================
             if (fn.name === "create_document") {
                 const document = {
                     title: args.title,
-                    content: args.content, // RAW HTML only here
-                    tag: {
-                        title: args.tag?.title,
-                        id: String(args.tag?.id),
-                    },
+                    content: args.content,
+                    tag: { title: args.tag?.title, id: String(args.tag?.id) },
                 };
 
-                // Return BOTH the tool output & the UI button node
                 return res.json({
                     type: "json",
                     data: {
-                        type: "button",
-                        label: "Open Draft Document",
-                        action: "create_document",
-                        document,
-                        style: {
-                            backgroundColor: "primary",
-                            borderRadius: 10,
-                            paddingVertical: 8,
-                            paddingHorizontal: 12,
-                        },
+                        type: "view",
+                        style: { paddingVertical: 8, gap: 8 },
+                        children: [
+                            {
+                                type: "text",
+                                text: "Your document is ready!",
+                                style: {
+                                    fontFamily: "Archivo-SemiBold",
+                                    fontSize: 18,
+                                    color: "text",
+                                },
+                            },
+                            {
+                                type: "text",
+                                text: "I’ve created the document based on your request. Tap the button below to open and edit it.",
+                                style: {
+                                    fontFamily: "Lato-Regular",
+                                    fontSize: 15,
+                                    color: "gray",
+                                },
+                            },
+                            {
+                                type: "button",
+                                label: "Open Draft Document",
+                                action: "create_document",
+                                document,
+                                style: {
+                                    backgroundColor: "primary",
+                                    borderRadius: "md",
+                                    paddingVertical: "sm",
+                                    paddingHorizontal: "md",
+                                },
+                            },
+                        ],
                     },
                 });
             }
         }
 
         // ------------------------------------------------------------
-        // FALLBACK: When model directly returns a JSON UI DSL
+        // FALLBACK UI — If model produced unclear text
         // ------------------------------------------------------------
-        let jsonOut;
+        let jsonOut: any = null;
         try {
             jsonOut = JSON.parse(
                 textOutput.replaceAll("```json", "").replaceAll("```", "")
@@ -1014,11 +1107,12 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                 children: [
                     {
                         type: "text",
-                        text: textOutput,
+                        text:
+                            textOutput || "I'm not sure how to help with that.",
                         style: {
                             fontFamily: "Lato-Regular",
                             fontSize: 15,
-                            color: "text",
+                            color: "gray",
                         },
                     },
                 ],
@@ -1026,7 +1120,6 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
         }
 
         sessionStore.appendTurn(sessionId, "model", JSON.stringify(jsonOut));
-        res.set("X-Session-Id", sessionId);
         return res.json({ type: "json", data: jsonOut });
     }
 );

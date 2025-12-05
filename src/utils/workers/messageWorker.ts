@@ -3,6 +3,7 @@ import socket from "../../config/socket.config"; // assuming you export io from 
 import MessageModel from "../../model/messageModel";
 import { messageQueue } from "../queues/messageQueue";
 import { redisConnection } from "../redis";
+import { sendMessageNotification } from "../messagingNotifications";
 
 function getNextOccurrence(current: Date, repeat: string): Date {
     const next = new Date(current);
@@ -67,6 +68,11 @@ export const messageWorker = new Worker(
 
             sentMessage = template;
         }
+        sendMessageNotification({
+            chatId: template.chat.toString(),
+            senderId: template.sender.toString(),
+            message: template,
+        });
         io.to(String(template.chat)).emit("new_message", sentMessage);
     },
     { connection: redisConnection }

@@ -70,6 +70,11 @@ const userSchema = new Schema<IUserDocument>(
             default: true,
             // select: false,
         },
+        fcmTokens: [
+            {
+                type: String,
+            },
+        ],
     },
     {
         timestamps: true,

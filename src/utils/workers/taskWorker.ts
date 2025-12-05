@@ -6,6 +6,7 @@ import MessageModel from "../../model/messageModel";
 import ChatModel from "../../model/chatModel";
 import moment from "moment";
 import { taskQueue } from "../queues/taskQueue";
+import { sendMessageNotification } from "../messagingNotifications";
 
 export function getNextOccurrence(current: Date, repeat: string): Date {
     const next = new Date(current);
@@ -52,7 +53,11 @@ export const taskWorker = new Worker(
             type: "text",
             status: "delivered",
         });
-
+        sendMessageNotification({
+            chatId: sentMessage.chat.toString(),
+            senderId: sentMessage.sender.toString(),
+            message: sentMessage,
+        });
         io.to(String(chat._id)).emit("new_message", sentMessage);
     },
     { connection: redisConnection }

@@ -4,6 +4,7 @@ import {
     CompleteMultipartUploadCommand,
     CreateMultipartUploadCommand,
     DeleteObjectCommand,
+    GetObjectCommand,
     PutObjectCommand,
     S3Client,
     UploadPartCommand,
@@ -11,6 +12,9 @@ import {
 import { sendResponse } from "./response";
 import { MulterFile } from "multer";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import * as ffmpeg from "fluent-ffmpeg";
+import fs from "fs";
+import { Readable } from "stream";
 declare global {
     namespace Express {
         interface Request {
@@ -194,4 +198,76 @@ export const multipartComplete = async ({
     await s3.send(command);
     const fileURL = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${encodeURIComponent(key)}`;
     return fileURL;
+};
+
+export const extractAndUploadThumbnail = async (s3Key: string) => {
+    const localVideoPath = `/tmp/${s3Key.split("/").pop()}`;
+    const localThumbnailPath = `/tmp/${s3Key.split("/").pop()}.jpg`;
+    const thumbnailKey = `thumbnails/${s3Key}.jpg`;
+    console.log("s3", s3Key);
+    // console.log("decode", decodeURI(s3Key));
+    console.log(localVideoPath);
+    console.log(localThumbnailPath);
+    console.log(thumbnailKey);
+
+    // 1. Download the video from S3
+    const getCommand = new GetObjectCommand({
+        Bucket: publicBucketName,
+        Key: s3Key,
+    });
+    console.log("here");
+    const { Body } = await s3.send(getCommand);
+    if (Body instanceof Readable) {
+        const writeStream = fs.createWriteStream(localVideoPath);
+        await new Promise((resolve, reject) => {
+            Body.pipe(writeStream)
+                .on("error", (err) => {
+                    fs.unlinkSync(localVideoPath); // Clean up
+                    reject(err);
+                })
+                .on("close", resolve);
+        });
+    } else {
+        // Handle the error if not running in a Node.js environment
+        throw new Error(
+            "S3 Body content is not a Node.js Readable stream. Cannot use .pipe() for download."
+        );
+    }
+    console.log("out");
+    // 2. Extract the thumbnail using FFmpeg
+    await new Promise((resolve, reject) => {
+        ffmpeg(localVideoPath)
+            .screenshots({
+                timestamps: ["00:00:05.000"], // Capture at 5 seconds
+                filename: localThumbnailPath.split("/").pop(),
+                folder: "/tmp",
+                size: "320x240", // Example size
+            })
+            .on("end", resolve)
+            .on("error", (err) => {
+                console.error("FFmpeg error:", err.message);
+                reject(err);
+            });
+    });
+
+    // 3. Upload the thumbnail to S3
+    const thumbnailStream = fs.createReadStream(localThumbnailPath);
+    const putCommand = new PutObjectCommand({
+        Bucket: publicBucketName,
+        Key: thumbnailKey,
+        Body: thumbnailStream,
+        ContentType: "image/jpeg",
+    });
+    await s3.send(putCommand);
+
+    // 4. Clean up local temporary files
+    fs.unlinkSync(localVideoPath);
+    fs.unlinkSync(localThumbnailPath);
+
+    // 5. Construct the thumbnail URL
+    const thumbnailUrl = `https://${publicBucketName}.s3.${process.env.AWS_REGION}.amazonaws.com/${encodeURIComponent(thumbnailKey)}`;
+
+    console.log(thumbnailUrl);
+    // Return the thumbnail URL to be saved in the DB
+    return thumbnailUrl;
 };

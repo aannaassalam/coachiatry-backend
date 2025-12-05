@@ -19,19 +19,20 @@ import ChatModel from "../model/chatModel";
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-const signToken = (id: string) => {
-    return jwt.sign({ id }, process.env.JWT_SECRET as string, {
-        expiresIn: process.env.JWT_EXPIRES_IN,
-    });
+const signToken = (id: string, isApp?: boolean) => {
+    return jwt.sign({ id }, process.env.JWT_SECRET!, {
+        expiresIn: !isApp ? process.env.JWT_EXPIRES_IN : "36500d",
+    } as jwt.SignOptions);
 };
 
 const createSendToken = (
     user: any,
     statusCode: number,
     res: Response,
-    message: string
+    message: string,
+    platform?: string
 ) => {
-    const token = signToken(user._id);
+    const token = signToken(user._id, platform === "app");
     // const cookieOptions: any = {
     //     expires: new Date(
     //         Date.now() +
@@ -122,7 +123,8 @@ export const signup = catchAsync(
             newUser,
             StatusCodes.CREATED,
             res,
-            "Signed up successfully!"
+            "Signed up successfully!",
+            req.body?.platform
         );
     }
 );
@@ -156,13 +158,19 @@ export const login = catchAsync(
                 )
             );
         }
-        createSendToken(user, StatusCodes.OK, res, "Logged in Successfully!");
+        createSendToken(
+            user,
+            StatusCodes.OK,
+            res,
+            "Logged in Successfully!",
+            req.body?.platform
+        );
     }
 );
 
 export const googleAuth = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const { id_token } = req.body;
+        const { id_token, platform } = req.body;
 
         if (!id_token) {
             return next(new AppError("Missing Google ID token", 400));
@@ -206,7 +214,13 @@ export const googleAuth = catchAsync(
         delete user.password;
 
         // Create your own app JWT (7 days)
-        createSendToken(user, StatusCodes.OK, res, "Logged in Successfully!");
+        createSendToken(
+            user,
+            StatusCodes.OK,
+            res,
+            "Logged in Successfully!",
+            platform
+        );
     }
 );
 
@@ -227,10 +241,7 @@ export const protect = catchAsync(
                 )
             );
         }
-        const decoded: any = await promisify(jwt.verify)(
-            token,
-            process.env.JWT_SECRET as string
-        );
+        const decoded: any = jwt.verify(token, process.env.JWT_SECRET!);
         const currentUser = await UserModel.findById(decoded.id);
         if (!currentUser) {
             return next(
@@ -397,5 +408,33 @@ export const updatePassword = catchAsync(
         user.password = req.body.password;
         await user.save();
         sendResponse(res, StatusCodes.OK, "Password updated successfully!");
+    }
+);
+
+export const updateFCMToken = catchAsync(
+    async (req: any, res: Response, next: NextFunction) => {
+        const token = req.body.fcmToken;
+        const user = req.user;
+
+        await UserModel.findByIdAndUpdate(user._id, {
+            $push: {
+                fcmTokens: token,
+            },
+        });
+
+        sendResponse(res, StatusCodes.OK, "");
+    }
+);
+
+export const removeFCMToken = catchAsync(
+    async (req: any, res: Response, next: NextFunction) => {
+        const token = req.body.fcmToken;
+        const user = req.user;
+
+        await UserModel.findByIdAndUpdate(user._id, {
+            $pull: { fcmTokens: token },
+        });
+
+        sendResponse(res, StatusCodes.OK, "");
     }
 );

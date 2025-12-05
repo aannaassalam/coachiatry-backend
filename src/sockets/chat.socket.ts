@@ -2,6 +2,9 @@ import { Server, Socket } from "socket.io";
 import mongoose from "mongoose";
 import MessageModel from "../model/messageModel";
 import ChatModel from "../model/chatModel";
+import admin from "../utils/firebaseAdmin";
+import { sendMessageNotification } from "../utils/messagingNotifications";
+import { extractAndUploadThumbnail } from "../utils/aws";
 
 const onlineUsers = new Map<string, string>();
 
@@ -62,6 +65,25 @@ export default (io: Server, socket: Socket) => {
 
     // Send message
     socket.on("send_message", async (data) => {
+        console.log(data.files.length > 0, data.type === "video", "matcher");
+        // if (data.files.length > 0 && data.type === "video") {
+        //     const thumbnails = await Promise.all(
+        //         data.files.map((_file) =>
+        //             extractAndUploadThumbnail(
+        //                 decodeURIComponent(
+        //                     _file.url.replace(
+        //                         `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/`,
+        //                         ""
+        //                     )
+        //                 )
+        //             )
+        //         )
+        //     );
+        //     data.files = data.files.map((file, i) => {
+        //         file.thumbnailUrl = thumbnails[i];
+        //     });
+        // }
+
         const message = await MessageModel.create({
             ...data,
             sentAt: new Date(),
@@ -141,6 +163,12 @@ export default (io: Server, socket: Socket) => {
                 });
             }
         }
+
+        sendMessageNotification({
+            chatId: message.chat.toString(),
+            senderId: (message.sender as any)._id.toString(),
+            message: message,
+        });
     });
 
     socket.on("mark_seen", async ({ chatId, userId }) => {

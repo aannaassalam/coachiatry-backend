@@ -15,6 +15,8 @@ router.post("/reset-password", authController.resetPassword);
 router.use(authController.protect);
 
 router.patch("/update-password", authController.updatePassword);
+router.patch("/update-fcm-token", authController.updateFCMToken);
+router.delete("/delete-fcm-token", authController.removeFCMToken);
 
 // Example of role-based restriction:
 // router.get('/adminOnly', authController.restrictTo('admin'), (req, res) => res.send('Admin only!'));

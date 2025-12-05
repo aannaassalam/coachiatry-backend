@@ -13,6 +13,7 @@ export interface IUserDocument extends Document {
     shareId: string;
     sharedViewers: string[];
     active: boolean;
+    fcmTokens?: string[];
     createdAt: Date;
     updatedAt: Date;
     correctPassword(
