@@ -201,8 +201,78 @@ export const getScheduleMessages = catchAsync(
             {
                 $lookup: {
                     from: "chats",
-                    localField: "chat",
-                    foreignField: "_id",
+                    let: { chatId: "$chat" }, // Pass the message's chat ID to the pipeline
+                    pipeline: [
+                        // a. Match the chat document
+                        { $match: { $expr: { $eq: ["$_id", "$$chatId"] } } },
+
+                        // b. Unwind members so we can look up individual users
+                        { $unwind: "$members" },
+
+                        // c. Lookup the User details for this specific member
+                        {
+                            $lookup: {
+                                from: "users",
+                                localField: "members.user", // Assuming this is the ObjectId in members array
+                                foreignField: "_id",
+                                as: "members.user",
+                            },
+                        },
+
+                        // d. Unwind the user (since lookup returns an array)
+                        {
+                            $unwind: {
+                                path: "$members.user",
+                                preserveNullAndEmptyArrays: true,
+                            },
+                        },
+
+                        // e. Group the members back into the chat document
+                        {
+                            $project: {
+                                // Keep the chat's root fields (for $group later)
+                                root: "$$ROOT",
+                                // Select only _id and name for the user object
+                                "members.user": {
+                                    _id: "$members.user._id",
+                                    fullName: "$members.user.fullName",
+                                },
+                                // Keep the member's specific fields (e.g., role)
+                                "members._id": "$members._id",
+                                "members.role": "$members.role",
+                                // You must include all fields you need from the 'members' sub-document here
+                            },
+                        },
+                        // *** END OF NEW STEP ***
+
+                        // e. Group the members back into the chat document
+                        {
+                            $group: {
+                                _id: "$_id",
+                                members: {
+                                    $push: {
+                                        _id: "$members._id",
+                                        role: "$members.role",
+                                        user: "$members.user", // Use the projected user here
+                                    },
+                                },
+                                // Keep the original chat fields (name, groupAdmin, etc.)
+                                root: { $first: "$root" }, // Use the root we saved in the $project stage
+                            },
+                        },
+
+                        // f. Merge the new 'members' array back into the original chat object
+                        {
+                            $replaceRoot: {
+                                newRoot: {
+                                    $mergeObjects: [
+                                        "$root",
+                                        { members: "$members" },
+                                    ],
+                                },
+                            },
+                        },
+                    ],
                     as: "chat",
                 },
             },
@@ -286,8 +356,78 @@ export const getScheduleMessagesByCoach = catchAsync(
             {
                 $lookup: {
                     from: "chats",
-                    localField: "chat",
-                    foreignField: "_id",
+                    let: { chatId: "$chat" }, // Pass the message's chat ID to the pipeline
+                    pipeline: [
+                        // a. Match the chat document
+                        { $match: { $expr: { $eq: ["$_id", "$$chatId"] } } },
+
+                        // b. Unwind members so we can look up individual users
+                        { $unwind: "$members" },
+
+                        // c. Lookup the User details for this specific member
+                        {
+                            $lookup: {
+                                from: "users",
+                                localField: "members.user", // Assuming this is the ObjectId in members array
+                                foreignField: "_id",
+                                as: "members.user",
+                            },
+                        },
+
+                        // d. Unwind the user (since lookup returns an array)
+                        {
+                            $unwind: {
+                                path: "$members.user",
+                                preserveNullAndEmptyArrays: true,
+                            },
+                        },
+
+                        // e. Group the members back into the chat document
+                        {
+                            $project: {
+                                // Keep the chat's root fields (for $group later)
+                                root: "$$ROOT",
+                                // Select only _id and name for the user object
+                                "members.user": {
+                                    _id: "$members.user._id",
+                                    fullName: "$members.user.fullName",
+                                },
+                                // Keep the member's specific fields (e.g., role)
+                                "members._id": "$members._id",
+                                "members.role": "$members.role",
+                                // You must include all fields you need from the 'members' sub-document here
+                            },
+                        },
+                        // *** END OF NEW STEP ***
+
+                        // e. Group the members back into the chat document
+                        {
+                            $group: {
+                                _id: "$_id",
+                                members: {
+                                    $push: {
+                                        _id: "$members._id",
+                                        role: "$members.role",
+                                        user: "$members.user", // Use the projected user here
+                                    },
+                                },
+                                // Keep the original chat fields (name, groupAdmin, etc.)
+                                root: { $first: "$root" }, // Use the root we saved in the $project stage
+                            },
+                        },
+
+                        // f. Merge the new 'members' array back into the original chat object
+                        {
+                            $replaceRoot: {
+                                newRoot: {
+                                    $mergeObjects: [
+                                        "$root",
+                                        { members: "$members" },
+                                    ],
+                                },
+                            },
+                        },
+                    ],
                     as: "chat",
                 },
             },

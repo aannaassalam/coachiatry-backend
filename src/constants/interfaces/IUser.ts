@@ -14,6 +14,9 @@ export interface IUserDocument extends Document {
     sharedViewers: string[];
     active: boolean;
     fcmTokens?: string[];
+    otp: string;
+    otpExpires: Date;
+    verified: boolean;
     createdAt: Date;
     updatedAt: Date;
     correctPassword(

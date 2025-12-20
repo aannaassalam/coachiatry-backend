@@ -137,6 +137,68 @@ export const RESET_LINK_HTML = (name: string, link: string) => {
   `;
 };
 
+export const OTP_EMAIL_HTML = (name: string, otp: string) => {
+    return `
+  <div style="font-family: 'Segoe UI', Arial, sans-serif; background: #f7f7f9; padding: 32px;">
+    <div style="max-width: 480px; margin: auto; background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.07); padding: 32px;">
+
+      <div style="text-align: center; margin-bottom: 24px;">
+        <img
+          src="https://coachiatry.s3.us-east-1.amazonaws.com/logo.svg"
+          alt="Coachiatry Logo"
+          style="height: 48px; margin-bottom: 8px;"
+        />
+        <h2 style="color: #1e88e5; margin: 0;">Verify Your Account</h2>
+      </div>
+
+      <p style="font-size: 16px; color: #222;">
+        Hello <strong>${name}</strong>,
+      </p>
+
+      <p style="font-size: 15px; color: #444;">
+        Use the following One-Time Password (OTP) to complete your verification:
+      </p>
+
+      <!-- OTP BOX -->
+      <div style="
+        margin: 32px 0;
+        text-align: center;
+      ">
+        <div style="
+          display: inline-block;
+          background: #f1f6ff;
+          border: 2px dashed #1e88e5;
+          border-radius: 12px;
+          padding: 18px 28px;
+          font-size: 36px;
+          font-weight: 700;
+          letter-spacing: 8px;
+          color: #1e88e5;
+          font-family: 'Courier New', monospace;
+        ">
+          ${otp}
+        </div>
+      </div>
+
+      <p style="font-size: 14px; color: #444;">
+        This OTP is valid for <strong>5 minutes</strong>. Please do not share it with anyone.
+      </p>
+
+      <p style="font-size: 14px; color: #666;">
+        If you did not request this verification, please ignore this email.
+      </p>
+
+      <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+
+      <p style="font-size: 14px; color: #888; text-align: right; margin: 0;">
+        Best regards,<br/>
+        <span style="color: #1e88e5; font-weight: 600;">Coachiatry Team</span>
+      </p>
+    </div>
+  </div>
+  `;
+};
+
 export const WELCOME_EMAIL_HTML = (name: string) => {
     return `
    <div style="font-family: 'Segoe UI', Arial, sans-serif; background: #f7f7f9; padding: 32px;">

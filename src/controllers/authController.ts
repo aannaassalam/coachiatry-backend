@@ -10,11 +10,13 @@ import { sendResponse } from "../utils/response";
 import { sendEmail, azureSendMail } from "../utils/email_sms";
 import { OAuth2Client } from "google-auth-library";
 import {
+    OTP_EMAIL_HTML,
     PASSWORD_HTML,
     RESET_LINK_HTML,
     WELCOME_EMAIL_HTML,
 } from "../constants/constants";
 import ChatModel from "../model/chatModel";
+import moment from "moment";
 // import sendEmail from '../utils/email_sms'; // Uncomment and implement as needed
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -89,6 +91,35 @@ export const signup = catchAsync(
             }
         }
 
+        const otp = crypto.randomInt(100000, 1000000).toString();
+        const existingUser = await UserModel.findOne({ email });
+
+        if (existingUser) {
+            if (existingUser.verified) {
+                return next(
+                    new AppError("Email already in use", StatusCodes.CONFLICT)
+                );
+            }
+
+            existingUser.otp = otp;
+            existingUser.otpExpires = new Date(
+                moment().add(5, "minutes").toString()
+            );
+            await existingUser.save({ validateBeforeSave: false });
+
+            try {
+                await sendEmail({
+                    email,
+                    subject: "You OTP to Coachiatry",
+                    html: OTP_EMAIL_HTML(fullName, otp),
+                });
+            } catch (err) {
+                console.warn("Failed to send welcome email:", err);
+            }
+
+            sendResponse(res, StatusCodes.OK, "OTP sent successfully");
+        }
+
         const newUser = await UserModel.create({
             fullName,
             email,
@@ -96,6 +127,9 @@ export const signup = catchAsync(
             photo,
             phone,
             role,
+            otp,
+            otpExpires: moment().add(5, "minutes").toString(),
+            verified: false,
         });
 
         await ChatModel.create({
@@ -112,20 +146,14 @@ export const signup = catchAsync(
         try {
             await sendEmail({
                 email,
-                subject: "Welcome to Coachiatry!",
-                html: WELCOME_EMAIL_HTML(fullName),
+                subject: "You OTP to Coachiatry",
+                html: OTP_EMAIL_HTML(fullName, otp),
             });
         } catch (err) {
             console.warn("Failed to send welcome email:", err);
         }
 
-        createSendToken(
-            newUser,
-            StatusCodes.CREATED,
-            res,
-            "Signed up successfully!",
-            req.body?.platform
-        );
+        sendResponse(res, StatusCodes.OK, "OTP sent successfully");
     }
 );
 
@@ -140,7 +168,9 @@ export const login = catchAsync(
                 )
             );
         }
-        const user = await UserModel.findOne({ email }).select("+password");
+        const user = await UserModel.findOne({ email, verified: true }).select(
+            "+password"
+        );
         user.updatedAt = new Date(); // Update the last updated time
         await user.save({ validateBeforeSave: false });
         if (!user.password)
@@ -198,6 +228,7 @@ export const googleAuth = catchAsync(
                 email,
                 fullName,
                 photo,
+                verified: true,
             });
 
             await ChatModel.create({
@@ -332,11 +363,14 @@ export const forgotPassword = catchAsync(
 export const verifyOtp = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const { otp, email } = req.body;
-        const user = await UserModel.findOne({
-            otp: otp,
-            email: email,
-            otpExpires: { $gt: Date.now() },
-        });
+        const user = await UserModel.findOne(
+            {
+                otp: otp,
+                email: email,
+                otpExpires: { $gt: Date.now() },
+            },
+            "-fcmTokens"
+        );
         if (!user) {
             return next(
                 new AppError(
@@ -345,10 +379,30 @@ export const verifyOtp = catchAsync(
                 )
             );
         }
+        user.otp = null;
+        user.otpExpires = null;
+        user.verified = true;
 
         await user.save({ validateBeforeSave: false });
+
+        try {
+            await sendEmail({
+                email,
+                subject: "Welcome to Coachiatry",
+                html: WELCOME_EMAIL_HTML(user.fullName),
+            });
+        } catch (err) {
+            console.warn("Failed to send welcome email:", err);
+        }
+
         // If OTP is valid, send success response
-        sendResponse(res, StatusCodes.OK, "OTP is valid", { userId: user._id });
+        createSendToken(
+            user,
+            StatusCodes.CREATED,
+            res,
+            "Signed up successfully!",
+            req.body?.platform
+        );
     }
 );
 

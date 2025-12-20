@@ -16,7 +16,6 @@ const userSchema = new Schema<IUserDocument>(
         email: {
             type: String,
             required: [true, "Please provide your email"],
-            unique: true,
             lowercase: true,
             validate: [validator.isEmail, "please provide a valid email"],
         },
@@ -75,13 +74,33 @@ const userSchema = new Schema<IUserDocument>(
                 type: String,
             },
         ],
+        otp: {
+            type: String,
+        },
+        otpExpires: {
+            type: Date,
+        },
+        verified: {
+            type: Boolean,
+            default: false,
+        },
     },
     {
         timestamps: true,
     }
 );
 
-userSchema.index({ email: 1 }, { unique: true });
+userSchema.index(
+    { email: 1 },
+    { unique: true, partialFilterExpression: { verified: true } }
+);
+userSchema.index(
+    { createdAt: 1 },
+    {
+        expireAfterSeconds: 60 * 60 * 24,
+        partialFilterExpression: { verified: false },
+    }
+);
 userSchema.index({ name: "text" });
 
 userSchema.pre<IUserDocument>("save", async function (next) {

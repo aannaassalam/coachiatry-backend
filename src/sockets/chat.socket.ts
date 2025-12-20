@@ -4,7 +4,6 @@ import MessageModel from "../model/messageModel";
 import ChatModel from "../model/chatModel";
 import admin from "../utils/firebaseAdmin";
 import { sendMessageNotification } from "../utils/messagingNotifications";
-import { extractAndUploadThumbnail } from "../utils/aws";
 
 const onlineUsers = new Map<string, string>();
 
