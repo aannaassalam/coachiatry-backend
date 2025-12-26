@@ -71,6 +71,13 @@ class APIFeatures<T extends Document> {
         return result;
     }
 
+    private isComplexQuery(obj: any): boolean {
+        if (typeof obj !== "object" || obj === null) return false;
+
+        // Check if any key in the object starts with '$' (e.g., $or, $not, $and)
+        return Object.keys(obj).some((key) => key.startsWith("$"));
+    }
+
     private excludeFieldsAndParseQuery() {
         // Create a copy of the query string and exclude unwanted fields
         const queryObj = { ...this.queryString };
@@ -88,7 +95,7 @@ class APIFeatures<T extends Document> {
         // Advanced filtering: handle operators like gte, gt, lte, lt
         let queryStr = JSON.stringify(queryObj);
         queryStr = queryStr.replace(
-            /\b(gte|gt|lte|lt|in)\b/g,
+            /\b(gte|gt|lte|lt|in|not|ne|or)\b/g,
             (match) => `$${match}`
         );
 
@@ -96,7 +103,9 @@ class APIFeatures<T extends Document> {
 
         const converted = this.convertTypes(parsedQuery);
 
-        return this.flattenObject(converted); // Return the parsed query object
+        return this.isComplexQuery(converted)
+            ? converted
+            : this.flattenObject(converted); // Return the parsed query object
     }
 
     filter() {
