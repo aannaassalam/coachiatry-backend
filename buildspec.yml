@@ -1,0 +1,28 @@
+version: 0.2
+
+phases:
+    install:
+        runtime-versions:
+            nodejs: 20
+        commands:
+            - echo "Installing dependencies..."
+            - npm ci
+    build:
+        commands:
+            - echo "Compiling TypeScript..."
+            - npm run build
+artifacts:
+    files:
+        # compiled app
+        - build/**/*
+        - node_modules/**/*
+        # package manager files
+        - package.json
+        - package-lock.json
+        # EB process manager
+        - Procfile
+        # any EB extensions (like env vars, nginx config)
+        - .ebextensions/**/*
+        # keep .npmrc if you need private registry
+        - .npmrc
+    discard-paths: no
