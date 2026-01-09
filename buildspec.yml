@@ -19,6 +19,7 @@ artifacts:
         # package manager files
         - package.json
         - package-lock.json
+        - serviceAccount.json
         # EB process manager
         - Procfile
         # any EB extensions (like env vars, nginx config)
