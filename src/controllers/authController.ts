@@ -159,7 +159,7 @@ export const signup = catchAsync(
 
 export const login = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const { email, password } = req.body;
+        const { email, password, platform } = req.body;
         if (!email || !password) {
             return next(
                 new AppError(
@@ -171,15 +171,8 @@ export const login = catchAsync(
         const user = await UserModel.findOne({ email, verified: true }).select(
             "+password"
         );
-        user.updatedAt = new Date(); // Update the last updated time
-        await user.save({ validateBeforeSave: false });
-        if (!user.password)
-            return next(
-                new AppError(
-                    "Please login using Google",
-                    StatusCodes.BAD_REQUEST
-                )
-            );
+        // user.updatedAt = new Date(); // Update the last updated time
+        // await user.save({ validateBeforeSave: false });
         if (!user || !(await user.correctPassword(password, user.password))) {
             return next(
                 new AppError(
@@ -188,12 +181,19 @@ export const login = catchAsync(
                 )
             );
         }
+        if (!user.password)
+            return next(
+                new AppError(
+                    "Please login using Google",
+                    StatusCodes.BAD_REQUEST
+                )
+            );
         createSendToken(
             user,
             StatusCodes.OK,
             res,
             "Logged in Successfully!",
-            req.body?.platform
+            platform
         );
     }
 );
@@ -362,15 +362,17 @@ export const forgotPassword = catchAsync(
 
 export const verifyOtp = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const { otp, email } = req.body;
+        const { otp, email, platform } = req.body;
+        console.log(req.body);
         const user = await UserModel.findOne(
             {
                 otp: otp,
                 email: email,
-                otpExpires: { $gt: Date.now() },
+                // otpExpires: { $gt: Date.now() },
             },
             "-fcmTokens"
-        );
+        ).sort({ createdAt: -1 });
+        console.log(user);
         if (!user) {
             return next(
                 new AppError(
@@ -401,7 +403,7 @@ export const verifyOtp = catchAsync(
             StatusCodes.CREATED,
             res,
             "Signed up successfully!",
-            req.body?.platform
+            platform
         );
     }
 );
