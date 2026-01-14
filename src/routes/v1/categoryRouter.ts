@@ -19,12 +19,15 @@ router
 router
     .route("/coach/:userId")
     .get(
-        restrictTo("coach"),
+        restrictTo("admin", "manager", "coach"),
         factory.getAllUnpaginated(CategoryModel, {
             coachTypeFilter: true,
         })
     )
-    .post(restrictTo("coach"), factory.createOne(CategoryModel));
+    .post(
+        restrictTo("admin", "manager", "coach"),
+        factory.createOne(CategoryModel)
+    );
 
 router
     .route("/:id")

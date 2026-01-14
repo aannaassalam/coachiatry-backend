@@ -22,8 +22,16 @@ const router = express.Router();
 router.use(protect);
 
 router.get("/", getAllConversations);
-router.get("/coach/:userId", restrictTo("coach"), getAllConversationsByCoach);
-router.get("/coach/room/:roomId", restrictTo("coach"), getConversation);
+router.get(
+    "/coach/:userId",
+    restrictTo("admin", "manager", "coach"),
+    getAllConversationsByCoach
+);
+router.get(
+    "/coach/room/:roomId",
+    restrictTo("admin", "manager", "coach"),
+    getConversation
+);
 
 router.post("/upload/start", startChatMultipartUpload);
 router.post("/upload/parts", chatPartUrls);

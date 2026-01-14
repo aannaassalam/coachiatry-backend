@@ -34,13 +34,15 @@ const userSchema = new Schema<IUserDocument>(
         },
         role: {
             type: String,
-            enum: ["user", "coach"],
+            enum: ["admin", "manager", "user", "coach"],
             default: "user",
         },
-        assignedCoach: {
-            type: mongoose.Types.ObjectId,
-            ref: "User",
-        },
+        assignedCoach: [
+            {
+                type: mongoose.Types.ObjectId,
+                ref: "User",
+            },
+        ],
         password: {
             type: String,
             // required: [true, "please provide a password"],
@@ -102,6 +104,8 @@ userSchema.index(
     }
 );
 userSchema.index({ name: "text" });
+userSchema.index({ role: 1 });
+userSchema.index({ assignedCoach: 1 });
 
 userSchema.pre<IUserDocument>("save", async function (next) {
     if (!this.isModified("password")) return next();

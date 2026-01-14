@@ -14,7 +14,7 @@ router.use(protect);
 router.route("/schedule").get(getScheduleMessages).post(scheduleMessage);
 router.get(
     "/schedule/coach/:userId",
-    restrictTo("coach"),
+    restrictTo("admin", "manager", "coach"),
     getScheduleMessagesByCoach
 );
 router.route("/schedule/:messageId").patch(editScheduleMessage);

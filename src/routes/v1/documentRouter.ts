@@ -19,8 +19,11 @@ router
 
 router
     .route("/coach")
-    .get(restrictTo("coach"), getAllDocumentsByCoach)
-    .post(restrictTo("coach"), factory.createOne(DocumentModel));
+    .get(restrictTo("admin", "manager", "coach"), getAllDocumentsByCoach)
+    .post(
+        restrictTo("admin", "manager", "coach"),
+        factory.createOne(DocumentModel)
+    );
 
 router
     .route("/:id")

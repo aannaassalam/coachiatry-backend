@@ -7,12 +7,17 @@ import * as factory from "./../../controllers/handleFactory";
 import {
     addWatchersById,
     addWatchersByLink,
+    createUserByHierarchy,
+    deleteUserSoft,
+    getAllUsers,
     getAllWatching,
     getUserById,
+    getUsers,
     getUsersById,
     revokeViewerAccess,
     suggestUsers,
     updateProfilePicture,
+    updateUserByHierarchy,
 } from "../../controllers/userController";
 import upload from "../../utils/multerConfig";
 
@@ -38,5 +43,11 @@ router.post("/add-watchers", addWatchersById);
 router.get("/share/:shareId", addWatchersByLink);
 router.get("/get-all-watching", getAllWatching);
 router.delete("/share/:viewerId", revokeViewerAccess);
+
+router.get("/get-users", getUsers);
+router.get("/get-all", getAllUsers);
+router.post("/create-user", createUserByHierarchy);
+router.put("/update-user/:id", updateUserByHierarchy);
+router.delete("/delete-user/:id", deleteUserSoft);
 
 export default router;

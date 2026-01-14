@@ -15,11 +15,17 @@ router
 
 router
     .route("/coach")
-    .get(restrictTo("coach"), factory.getAll(TranscriptionModel));
+    .get(
+        restrictTo("admin", "manager", "coach"),
+        factory.getAll(TranscriptionModel)
+    );
 
 router
     .route("/coach/:id")
-    .delete(restrictTo("coach"), factory.deleteOne(TranscriptionModel));
+    .delete(
+        restrictTo("admin", "manager", "coach"),
+        factory.deleteOne(TranscriptionModel)
+    );
 
 router
     .route("/:id")

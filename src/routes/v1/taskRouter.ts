@@ -25,7 +25,10 @@ router
 
 router
     .route("/coach")
-    .get(restrictTo("coach"), factory.getAllUnpaginated(TaskModel))
+    .get(
+        restrictTo("admin", "manager", "coach"),
+        factory.getAllUnpaginated(TaskModel)
+    )
     .post(createTaskByCoach);
 
 router.patch("/assign-toggle", assignToCoach);

@@ -1,15 +1,15 @@
-import mongoose, { Document, ObjectId, Schema } from "mongoose";
+import mongoose, { Document, Types, Schema } from "mongoose";
 
 export interface IUserDocument extends Document {
     fullName: string;
     email: string;
     photo?: string;
     phone?: string;
-    role: "user" | "coach";
+    role: "admin" | "manager" | "user" | "coach";
     password: string | null;
     passwordResetToken: String;
     passwordResetExpires: Date;
-    assignedCoach: ObjectId;
+    assignedCoach: Types.ObjectId[];
     shareId: string;
     sharedViewers: string[];
     active: boolean;

@@ -223,6 +223,53 @@ export const WELCOME_EMAIL_HTML = (name: string) => {
    `;
 };
 
+export const WELCOME_EMAIL_HTML_WITH_PASSWORD = (
+    name: string,
+    password: string
+) => {
+    return `
+   <div style="font-family: 'Segoe UI', Arial, sans-serif; background: #f7f7f9; padding: 32px;">
+      <div style="max-width: 480px; margin: auto; background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.07); padding: 32px;">
+         <div style="text-align: center; margin-bottom: 24px;">
+            <img src="https://coachiatry.s3.us-east-1.amazonaws.com/logo.svg" alt="Coachiatry Logo" style="height: 48px; margin-bottom: 8px;" />
+            <h2 style="color: #1e88e5; margin: 0;">Welcome to Coachiatry!</h2>
+         </div>
+         <p style="font-size: 16px; color: #222;">Dear <strong>${name}</strong>,</p>
+         <p style="font-size: 15px; color: #444; margin-bottom:20px">Welcome to Coachiatry! Your account has been successfully created.</p>
+         <p style="font-size: 15px; color: #444;">You can now access your dashboard and start using our services.</p>
+         <p style="font-size: 15px; color: #444;">Temporary password</p>
+         <div style="
+        margin: 32px 0;
+        text-align: center;
+      ">
+        <div style="
+          display: inline-block;
+          background: #f1f6ff;
+          border: 2px dashed #1e88e5;
+          border-radius: 12px;
+          padding: 18px 28px;
+          font-size: 28px;
+          font-weight: 700;
+          letter-spacing: 8px;
+          color: #1e88e5;
+          font-family: 'Courier New', monospace;
+        ">
+          ${password}
+        </div>
+      </div>
+         <div style="text-align: center; margin: 24px 0;">
+            <a href="${process.env.CLIENT_URL || "#"}" style="background: #1e88e5; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: 600;">Access Dashboard</a>
+         </div>
+         <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+         <p style="font-size: 14px; color: #888; text-align: right; margin: 0;">
+            Best regards,<br/>
+            <span style="color: #1e88e5; font-weight: 600;">Coachiatry Team</span>
+         </p>
+      </div>
+   </div>
+   `;
+};
+
 export const ACCOUNT_CREATED_HTML = (
     name: string,
     email: string,

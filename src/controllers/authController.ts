@@ -372,7 +372,7 @@ export const verifyOtp = catchAsync(
             },
             "-fcmTokens"
         ).sort({ createdAt: -1 });
-        console.log(user);
+
         if (!user) {
             return next(
                 new AppError(
