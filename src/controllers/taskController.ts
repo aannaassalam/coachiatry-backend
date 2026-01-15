@@ -53,23 +53,23 @@ export const createTaskByCoach = catchAsync(
     }
 );
 
-export const assignToCoach = catchAsync(
-    async (req: Request, res: Response, next: NextFunction) => {
-        const user = req.user;
-        const { taskId } = req.body;
+// export const assignToCoach = catchAsync(
+//     async (req: Request, res: Response, next: NextFunction) => {
+//         const user = req.user;
+//         const { taskId } = req.body;
 
-        const task = await TaskModel.findById(taskId);
+//         const task = await TaskModel.findById(taskId).populate('user');
 
-        if (task.assignedTo.toString() === user._id.toString()) {
-            task.assignedTo = user.assignedCoach;
-        } else {
-            task.assignedTo = user._id;
-        }
+//         if (task.user.assignedCoach.toString() === user._id.toString()) {
+//             task.assignedCoach = user.assignedCoach;
+//         } else {
+//             task.assignedCoach = user._id;
+//         }
 
-        await task.save();
-        sendResponse(res, 200, "Task executer changed successfully");
-    }
-);
+//         await task.save();
+//         sendResponse(res, 200, "Task executer changed successfully");
+//     }
+// );
 
 export const editTask = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
