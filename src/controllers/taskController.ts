@@ -53,23 +53,52 @@ export const createTaskByCoach = catchAsync(
     }
 );
 
-// export const assignToCoach = catchAsync(
-//     async (req: Request, res: Response, next: NextFunction) => {
-//         const user = req.user;
-//         const { taskId } = req.body;
+export const assignToCoach = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const requester = req.user; // logged-in user (patient OR coach OR admin)
+        const { taskId, coachId } = req.body;
 
-//         const task = await TaskModel.findById(taskId).populate('user');
+        if (!taskId || !coachId) {
+            return next(new AppError("taskId and coachId are required", 400));
+        }
 
-//         if (task.user.assignedCoach.toString() === user._id.toString()) {
-//             task.assignedCoach = user.assignedCoach;
-//         } else {
-//             task.assignedCoach = user._id;
-//         }
+        const task = await TaskModel.findById(taskId);
+        if (!task) {
+            return next(new AppError("Task not found", 404));
+        }
 
-//         await task.save();
-//         sendResponse(res, 200, "Task executer changed successfully");
-//     }
-// );
+        // ✅ Optional but recommended: only task owner can assign
+        // If admin/manager/coach should be allowed too, tell me and I’ll modify.
+        if (task.user.toString() !== requester._id.toString()) {
+            return next(
+                new AppError("You are not allowed to assign this task", 403)
+            );
+        }
+
+        // ✅ Ensure the selected coach is one of patient's assigned coaches
+        const patientAssignedCoaches = requester.assignedCoach || [];
+
+        const isValidCoach = patientAssignedCoaches.some(
+            (id: any) => id.toString() === coachId.toString()
+        );
+
+        if (!isValidCoach) {
+            return next(
+                new AppError("This coach is not assigned to the patient", 403)
+            );
+        }
+
+        // ✅ Assign task to selected coach
+        task.assignedTo = coachId;
+
+        await task.save();
+
+        sendResponse(res, 200, "Task executor changed successfully", {
+            taskId: task._id,
+            assignedTo: task.assignedTo,
+        });
+    }
+);
 
 export const editTask = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
