@@ -62,7 +62,7 @@ export const updateProfilePicture = catchAsync(
         });
 
         return sendResponse(res, 200, "Profile Picture updated Successfully");
-    }
+    },
 );
 
 export const getAllUsers = catchAsync(
@@ -71,11 +71,11 @@ export const getAllUsers = catchAsync(
             verified: true,
             active: true,
         }).select(
-            "-password -otp -otpExpires -passwordResetToken -passwordResetExpires -__v -fcmToken"
+            "-password -otp -otpExpires -passwordResetToken -passwordResetExpires -__v -fcmToken",
         );
 
         sendResponse(res, 200, "All users fetched", users);
-    }
+    },
 );
 
 export const getUsersById = catchAsync(
@@ -90,11 +90,11 @@ export const getUsersById = catchAsync(
                 active: true,
                 verified: true,
             },
-            "_id fullName email photo"
+            "_id fullName email photo",
         );
 
         sendResponse(res, 200, "User fetched by id", users);
-    }
+    },
 );
 
 export const getUserById = catchAsync(
@@ -103,11 +103,11 @@ export const getUserById = catchAsync(
 
         const users = await UserModel.findById(
             userId,
-            "_id fullName email photo createdAt"
+            "_id fullName email photo createdAt",
         );
 
         sendResponse(res, 200, "User fetched by id", users);
-    }
+    },
 );
 
 export const suggestUsers = catchAsync(
@@ -146,7 +146,7 @@ export const suggestUsers = catchAsync(
 
             sendResponse(res, 200, "Suggestions fetched", users);
         }
-    }
+    },
 );
 
 export const addWatchersByLink = catchAsync(
@@ -184,7 +184,7 @@ export const addWatchersByLink = catchAsync(
         delete sharer.password;
 
         sendResponse(res, 200, "Access Granted", sharer);
-    }
+    },
 );
 
 export const addWatchersById = catchAsync(
@@ -204,11 +204,11 @@ export const addWatchersById = catchAsync(
                 ],
                 type: "direct",
                 createdBy: currentUser,
-            }))
+            })),
         );
 
         sendResponse(res, 200, "Watchers added successfully!");
-    }
+    },
 );
 
 export const revokeViewerAccess = catchAsync(
@@ -217,7 +217,7 @@ export const revokeViewerAccess = catchAsync(
         if (!sharer) throw new AppError("User not found", 404);
 
         sharer.sharedViewers = sharer.sharedViewers.filter(
-            (v) => v.toString() !== req.params.viewerId
+            (v) => v.toString() !== req.params.viewerId,
         );
 
         await sharer.save();
@@ -229,7 +229,7 @@ export const revokeViewerAccess = catchAsync(
         });
 
         sendResponse(res, 200, "Access revoked successfully");
-    }
+    },
 );
 
 export const getAllWatching = catchAsync(
@@ -242,7 +242,7 @@ export const getAllWatching = catchAsync(
         }).select(["shareId", "fullName", "photo"]);
 
         sendResponse(res, 200, "Watching fetched", users);
-    }
+    },
 );
 
 export const getUsers = catchAsync(
@@ -319,7 +319,7 @@ export const getUsers = catchAsync(
                     $replaceRoot: {
                         newRoot: "$downline",
                     },
-                }
+                },
             );
         } else if (role === "coach") {
             /**
@@ -393,7 +393,7 @@ export const getUsers = catchAsync(
                         },
                     },
                 },
-            }
+            },
         );
 
         const result = await UserModel.aggregate(pipeline);
@@ -402,7 +402,7 @@ export const getUsers = catchAsync(
             data: result?.[0]?.data || [],
             meta: result?.[0]?.meta || { total: 0, page, limit, totalPages: 0 },
         });
-    }
+    },
 );
 
 const allowedCreateMap = {
@@ -444,7 +444,7 @@ export const createUserByHierarchy = catchAsync(
         if (!canCreate) {
             throw new AppError(
                 `You are not allowed to create role: ${role}`,
-                403
+                403,
             );
         }
 
@@ -478,7 +478,7 @@ export const createUserByHierarchy = catchAsync(
             if (!assignedCoach?.length) {
                 throw new AppError(
                     "assignedCoach (coachId) is required when manager creates a user",
-                    400
+                    400,
                 );
             }
 
@@ -490,7 +490,7 @@ export const createUserByHierarchy = catchAsync(
             if (!assignedCoach?.length) {
                 throw new AppError(
                     "assignedCoach (managerId) is required when admin creates a coach",
-                    400
+                    400,
                 );
             }
 
@@ -502,7 +502,7 @@ export const createUserByHierarchy = catchAsync(
             if (!assignedCoach?.length) {
                 throw new AppError(
                     "assignedCoach (coachId) is required when admin creates a user",
-                    400
+                    400,
                 );
             }
 
@@ -544,7 +544,7 @@ export const createUserByHierarchy = catchAsync(
             if (count !== finalAssignedCoach.length) {
                 throw new AppError(
                     "assignedTo must contain valid coach id(s) only",
-                    400
+                    400,
                 );
             }
         }
@@ -560,7 +560,7 @@ export const createUserByHierarchy = catchAsync(
             if (count !== finalAssignedCoach.length) {
                 throw new AppError(
                     "assignedTo must contain valid manager id(s) only",
-                    400
+                    400,
                 );
             }
         }
@@ -576,7 +576,7 @@ export const createUserByHierarchy = catchAsync(
             if (count !== finalAssignedCoach.length) {
                 throw new AppError(
                     "assignedTo must contain valid admin id(s) only",
-                    400
+                    400,
                 );
             }
         }
@@ -634,7 +634,7 @@ export const createUserByHierarchy = catchAsync(
         });
 
         sendResponse(res, 201, "User created successfully", created);
-    }
+    },
 );
 
 export const updateUserByHierarchy = catchAsync(
@@ -643,7 +643,7 @@ export const updateUserByHierarchy = catchAsync(
         const requesterRole: Role = req.user.role;
 
         const targetUserId = mongoose.Types.ObjectId.createFromHexString(
-            req.params.id
+            req.params.id,
         );
 
         const { fullName, email, role, assignedCoach } = req.body as {
@@ -680,13 +680,13 @@ export const updateUserByHierarchy = catchAsync(
                 const isUnderManager =
                     Array.isArray(targetUser.assignedCoach) &&
                     targetUser.assignedCoach.some(
-                        (id) => id.toString() === requesterId.toString()
+                        (id) => id.toString() === requesterId.toString(),
                     );
 
                 if (!isUnderManager) {
                     throw new AppError(
                         "You can only edit coaches under you",
-                        403
+                        403,
                     );
                 }
             }
@@ -700,25 +700,25 @@ export const updateUserByHierarchy = catchAsync(
                 }).select("_id");
 
                 const coachIdList = managerCoachIds.map((c) =>
-                    c._id.toString()
+                    c._id.toString(),
                 );
 
                 const isUnderManager =
                     Array.isArray(targetUser.assignedCoach) &&
                     targetUser.assignedCoach.some((cid) =>
-                        coachIdList.includes(cid.toString())
+                        coachIdList.includes(cid.toString()),
                     );
 
                 if (!isUnderManager) {
                     throw new AppError(
                         "You can only edit users under your coaches",
-                        403
+                        403,
                     );
                 }
             } else {
                 throw new AppError(
                     "Managers can only edit coaches and users under them",
-                    403
+                    403,
                 );
             }
         }
@@ -732,13 +732,13 @@ export const updateUserByHierarchy = catchAsync(
             const isMine =
                 Array.isArray(targetUser.assignedCoach) &&
                 targetUser.assignedCoach.some(
-                    (id) => id.toString() === requesterId.toString()
+                    (id) => id.toString() === requesterId.toString(),
                 );
 
             if (!isMine) {
                 throw new AppError(
                     "You can only edit your assigned users",
-                    403
+                    403,
                 );
             }
         }
@@ -750,7 +750,7 @@ export const updateUserByHierarchy = catchAsync(
             if (!isSelf) {
                 throw new AppError(
                     "You are not allowed to edit this user",
-                    403
+                    403,
                 );
             }
         }
@@ -801,7 +801,7 @@ export const updateUserByHierarchy = catchAsync(
                     if (coachCount !== newAssigned.length) {
                         throw new AppError(
                             "assignedTo must contain valid coach id(s) only",
-                            400
+                            400,
                         );
                     }
 
@@ -813,7 +813,7 @@ export const updateUserByHierarchy = catchAsync(
                     if (!newAssigned.length) {
                         throw new AppError(
                             "Coach must be assigned to a manager",
-                            400
+                            400,
                         );
                     }
 
@@ -826,7 +826,7 @@ export const updateUserByHierarchy = catchAsync(
                     if (managerCount !== newAssigned.length) {
                         throw new AppError(
                             "assignedTo must contain valid manager id(s) only",
-                            400
+                            400,
                         );
                     }
 
@@ -847,7 +847,7 @@ export const updateUserByHierarchy = catchAsync(
                         if (adminCount !== newAssigned.length) {
                             throw new AppError(
                                 "assignedTo must contain valid admin id(s) only",
-                                400
+                                400,
                             );
                         }
 
@@ -868,17 +868,17 @@ export const updateUserByHierarchy = catchAsync(
                 }).select("_id");
 
                 const allowedSet = new Set(
-                    allowedCoachIds.map((c) => c._id.toString())
+                    allowedCoachIds.map((c) => c._id.toString()),
                 );
 
                 const allAreAllowed = newAssigned.every((id) =>
-                    allowedSet.has(id.toString())
+                    allowedSet.has(id.toString()),
                 );
 
                 if (!allAreAllowed) {
                     throw new AppError(
                         "You can only assign users to coaches under you",
-                        403
+                        403,
                     );
                 }
 
@@ -891,11 +891,11 @@ export const updateUserByHierarchy = catchAsync(
 
         // ✅ Return updated user
         const updated = await UserModel.findById(targetUser._id).select(
-            "-password -otp -otpExpires -passwordResetToken -passwordResetExpires -__v"
+            "-password -otp -otpExpires -passwordResetToken -passwordResetExpires -__v",
         );
 
         sendResponse(res, 200, "User updated successfully", updated);
-    }
+    },
 );
 
 export const deleteUserSoft = catchAsync(
@@ -903,7 +903,7 @@ export const deleteUserSoft = catchAsync(
         const requesterRole = req.user.role;
         const requesterId = req.user._id;
         const targetId = mongoose.Types.ObjectId.createFromHexString(
-            req.params.id
+            req.params.id,
         );
 
         // ❌ prevent self delete if you want
@@ -970,18 +970,18 @@ export const deleteUserSoft = catchAsync(
         const updated = await UserModel.findOneAndUpdate(
             matchFilter,
             { $set: { active: false } },
-            { new: true }
+            { new: true },
         ).select(
-            "-password -otp -otpExpires -passwordResetToken -passwordResetExpires -__v"
+            "-password -otp -otpExpires -passwordResetToken -passwordResetExpires -__v",
         );
 
         if (!updated) {
             throw new AppError(
                 "Not allowed or user not found/already inactive",
-                403
+                403,
             );
         }
 
         sendResponse(res, 200, "User removed successfully", updated);
-    }
+    },
 );

@@ -168,9 +168,9 @@ export const login = catchAsync(
                 )
             );
         }
-        const user = await UserModel.findOne({ email, verified: true }).select(
-            "+password"
-        );
+        const user = await UserModel.findOne({ email, verified: true })
+            .populate("sharedViewers assignedCoach")
+            .select("+password");
         // user.updatedAt = new Date(); // Update the last updated time
         // await user.save({ validateBeforeSave: false });
         if (!user || !(await user.correctPassword(password, user.password))) {
