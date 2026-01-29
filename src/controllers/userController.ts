@@ -347,6 +347,28 @@ export const getUsers = catchAsync(
             pipeline.push({ $match: searchFilter });
         }
 
+        pipeline.push({
+            $lookup: {
+                from: "users",
+                localField: "assignedCoach",
+                foreignField: "_id",
+                as: "assignedCoach",
+                pipeline: [
+                    {
+                        $project: {
+                            password: 0,
+                            otp: 0,
+                            otpExpires: 0,
+                            passwordResetToken: 0,
+                            passwordResetExpires: 0,
+                            fcmToken: 0,
+                            __v: 0,
+                        },
+                    },
+                ],
+            },
+        });
+
         // ✅ Remove sensitive fields
         pipeline.push({
             $project: {
