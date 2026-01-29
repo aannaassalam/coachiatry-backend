@@ -9,6 +9,7 @@ import mongoose from "mongoose";
 import crypto from "crypto";
 import { sendEmail } from "../utils/email_sms";
 import { WELCOME_EMAIL_HTML_WITH_PASSWORD } from "../constants/constants";
+import { createDirectChatIfNotExists } from "./chatController";
 
 // Initialize S3 client
 const s3 = new S3Client({
@@ -633,6 +634,18 @@ export const createUserByHierarchy = catchAsync(
             password,
         });
 
+        if (finalAssignedCoach.length) {
+            await Promise.all(
+                finalAssignedCoach.map((coachId) =>
+                    createDirectChatIfNotExists(
+                        created._id,
+                        coachId,
+                        requesterId,
+                    ),
+                ),
+            );
+        }
+
         sendResponse(res, 201, "User created successfully", created);
     },
 );
@@ -893,6 +906,18 @@ export const updateUserByHierarchy = catchAsync(
         const updated = await UserModel.findById(targetUser._id).select(
             "-password -otp -otpExpires -passwordResetToken -passwordResetExpires -__v",
         );
+
+        if (targetUser.assignedCoach.length) {
+            await Promise.all(
+                targetUser.assignedCoach.map((coachId) =>
+                    createDirectChatIfNotExists(
+                        targetUser._id,
+                        coachId,
+                        requesterId,
+                    ),
+                ),
+            );
+        }
 
         sendResponse(res, 200, "User updated successfully", updated);
     },

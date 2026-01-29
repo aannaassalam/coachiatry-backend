@@ -89,19 +89,19 @@ const userSchema = new Schema<IUserDocument>(
     },
     {
         timestamps: true,
-    }
+    },
 );
 
 userSchema.index(
     { email: 1 },
-    { unique: true, partialFilterExpression: { verified: true } }
+    { unique: true, partialFilterExpression: { verified: true, active: true } },
 );
 userSchema.index(
     { createdAt: 1 },
     {
         expireAfterSeconds: 60 * 60 * 24,
         partialFilterExpression: { verified: false },
-    }
+    },
 );
 userSchema.index({ name: "text" });
 userSchema.index({ role: 1 });
@@ -120,13 +120,14 @@ userSchema.pre<IUserDocument>("save", async function (next) {
 
 userSchema.methods.correctPassword = async function (
     candidatePassword: string,
-    userPassword: string
+    userPassword: string,
 ) {
     //check user is active or not
     if (!this.active) {
+        return;
         throw new AppError(
             "Your account is deactivated. Please contact support.",
-            403
+            403,
         );
     }
     return await bcrypt.compare(candidatePassword, userPassword);

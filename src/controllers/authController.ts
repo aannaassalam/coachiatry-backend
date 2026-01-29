@@ -32,7 +32,7 @@ const createSendToken = (
     statusCode: number,
     res: Response,
     message: string,
-    platform?: string
+    platform?: string,
 ) => {
     const token = signToken(user._id, platform === "app");
     // const cookieOptions: any = {
@@ -85,8 +85,8 @@ export const signup = catchAsync(
                 return next(
                     new AppError(
                         "Failed to send generated password email",
-                        StatusCodes.INTERNAL_SERVER_ERROR
-                    )
+                        StatusCodes.INTERNAL_SERVER_ERROR,
+                    ),
                 );
             }
         }
@@ -97,13 +97,13 @@ export const signup = catchAsync(
         if (existingUser) {
             if (existingUser.verified) {
                 return next(
-                    new AppError("Email already in use", StatusCodes.CONFLICT)
+                    new AppError("Email already in use", StatusCodes.CONFLICT),
                 );
             }
 
             existingUser.otp = otp;
             existingUser.otpExpires = new Date(
-                moment().add(5, "minutes").toString()
+                moment().add(5, "minutes").toString(),
             );
             await existingUser.save({ validateBeforeSave: false });
 
@@ -154,7 +154,7 @@ export const signup = catchAsync(
         }
 
         sendResponse(res, StatusCodes.OK, "OTP sent successfully");
-    }
+    },
 );
 
 export const login = catchAsync(
@@ -164,11 +164,15 @@ export const login = catchAsync(
             return next(
                 new AppError(
                     "Please provide email and password!",
-                    StatusCodes.BAD_REQUEST
-                )
+                    StatusCodes.BAD_REQUEST,
+                ),
             );
         }
-        const user = await UserModel.findOne({ email, verified: true })
+        const user = await UserModel.findOne({
+            email,
+            verified: true,
+            active: true,
+        })
             .populate("sharedViewers assignedCoach")
             .select("+password");
         // user.updatedAt = new Date(); // Update the last updated time
@@ -177,25 +181,25 @@ export const login = catchAsync(
             return next(
                 new AppError(
                     "Incorrect email or password",
-                    StatusCodes.UNAUTHORIZED
-                )
+                    StatusCodes.UNAUTHORIZED,
+                ),
             );
         }
         if (!user.password)
             return next(
                 new AppError(
                     "Please login using Google",
-                    StatusCodes.BAD_REQUEST
-                )
+                    StatusCodes.BAD_REQUEST,
+                ),
             );
         createSendToken(
             user,
             StatusCodes.OK,
             res,
             "Logged in Successfully!",
-            platform
+            platform,
         );
-    }
+    },
 );
 
 export const googleAuth = catchAsync(
@@ -250,9 +254,9 @@ export const googleAuth = catchAsync(
             StatusCodes.OK,
             res,
             "Logged in Successfully!",
-            platform
+            platform,
         );
-    }
+    },
 );
 
 export const protect = catchAsync(
@@ -268,8 +272,8 @@ export const protect = catchAsync(
             return next(
                 new AppError(
                     "You are not logged in! Please log in to get access.",
-                    StatusCodes.UNAUTHORIZED
-                )
+                    StatusCodes.UNAUTHORIZED,
+                ),
             );
         }
         const decoded: any = jwt.verify(token, process.env.JWT_SECRET!);
@@ -278,8 +282,8 @@ export const protect = catchAsync(
             return next(
                 new AppError(
                     "The user belonging to this token does no longer exist.",
-                    StatusCodes.UNAUTHORIZED
-                )
+                    StatusCodes.UNAUTHORIZED,
+                ),
             );
         }
         // if (currentUser.changedPasswordAfter(decoded.iat)) {
@@ -292,7 +296,7 @@ export const protect = catchAsync(
         // }
         req.user = currentUser;
         next();
-    }
+    },
 );
 
 export const injectUserId = catchAsync(
@@ -301,7 +305,7 @@ export const injectUserId = catchAsync(
             req.params.id = req.user._id.toString();
         }
         next();
-    }
+    },
 );
 
 export const restrictTo = (...roles: string[]) => {
@@ -310,8 +314,8 @@ export const restrictTo = (...roles: string[]) => {
             return next(
                 new AppError(
                     "You do not have permission to perform this action",
-                    StatusCodes.FORBIDDEN
-                )
+                    StatusCodes.FORBIDDEN,
+                ),
             );
         }
         next();
@@ -326,8 +330,8 @@ export const forgotPassword = catchAsync(
             return next(
                 new AppError(
                     "There is no user with that email address",
-                    StatusCodes.NOT_FOUND
-                )
+                    StatusCodes.NOT_FOUND,
+                ),
             );
         }
 
@@ -347,17 +351,17 @@ export const forgotPassword = catchAsync(
             sendResponse(
                 res,
                 StatusCodes.OK,
-                "Password reset link sent to your email!"
+                "Password reset link sent to your email!",
             );
         } catch (err) {
             return next(
                 new AppError(
                     "There was an error sending the email. Try again later!",
-                    StatusCodes.INTERNAL_SERVER_ERROR
-                )
+                    StatusCodes.INTERNAL_SERVER_ERROR,
+                ),
             );
         }
-    }
+    },
 );
 
 export const verifyOtp = catchAsync(
@@ -370,15 +374,15 @@ export const verifyOtp = catchAsync(
                 email: email,
                 // otpExpires: { $gt: Date.now() },
             },
-            "-fcmTokens"
+            "-fcmTokens",
         ).sort({ createdAt: -1 });
 
         if (!user) {
             return next(
                 new AppError(
                     "OTP is invalid or has expired",
-                    StatusCodes.BAD_REQUEST
-                )
+                    StatusCodes.BAD_REQUEST,
+                ),
             );
         }
         user.otp = null;
@@ -403,9 +407,9 @@ export const verifyOtp = catchAsync(
             StatusCodes.CREATED,
             res,
             "Signed up successfully!",
-            platform
+            platform,
         );
-    }
+    },
 );
 
 export const resetPassword = catchAsync(
@@ -428,8 +432,8 @@ export const resetPassword = catchAsync(
             return next(
                 new AppError(
                     "Token is invalid or has expired",
-                    StatusCodes.BAD_REQUEST
-                )
+                    StatusCodes.BAD_REQUEST,
+                ),
             );
         }
 
@@ -440,7 +444,7 @@ export const resetPassword = catchAsync(
 
         await user.save();
         sendResponse(res, 200, "Password reset successfully!");
-    }
+    },
 );
 
 export const updatePassword = catchAsync(
@@ -457,14 +461,14 @@ export const updatePassword = catchAsync(
             return next(
                 new AppError(
                     "Your current password is wrong",
-                    StatusCodes.UNAUTHORIZED
-                )
+                    StatusCodes.UNAUTHORIZED,
+                ),
             );
         }
         user.password = req.body.password;
         await user.save();
         sendResponse(res, StatusCodes.OK, "Password updated successfully!");
-    }
+    },
 );
 
 export const updateFCMToken = catchAsync(
@@ -479,7 +483,7 @@ export const updateFCMToken = catchAsync(
         });
 
         sendResponse(res, StatusCodes.OK, "");
-    }
+    },
 );
 
 export const removeFCMToken = catchAsync(
@@ -492,5 +496,5 @@ export const removeFCMToken = catchAsync(
         });
 
         sendResponse(res, StatusCodes.OK, "");
-    }
+    },
 );

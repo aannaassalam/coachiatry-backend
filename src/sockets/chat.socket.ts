@@ -31,7 +31,7 @@ export default (io: Server, socket: Socket) => {
                     sender: { $ne: userId },
                     status: "sent",
                 },
-                { $set: { status: "delivered" } }
+                { $set: { status: "delivered" } },
             );
 
             console.log("✅ Delivered update count:", result.modifiedCount);
@@ -64,7 +64,6 @@ export default (io: Server, socket: Socket) => {
 
     // Send message
     socket.on("send_message", async (data) => {
-        console.log(data.files.length > 0, data.type === "video", "matcher");
         // if (data.files.length > 0 && data.type === "video") {
         //     const thumbnails = await Promise.all(
         //         data.files.map((_file) =>
@@ -102,7 +101,7 @@ export default (io: Server, socket: Socket) => {
 
         const roomSockets = await io.in(data.chat).fetchSockets();
         const recipientOnline = roomSockets.some(
-            (s) => s.data?.userId && s.data.userId !== data.sender
+            (s) => s.data?.userId && s.data.userId !== data.sender,
         );
 
         if (recipientOnline) {
@@ -180,12 +179,12 @@ export default (io: Server, socket: Socket) => {
             // ✅ 1. Update lastReadAt for that user
             await ChatModel.updateOne(
                 { _id: chatId, "members.user": userObjectId },
-                { $set: { "members.$.lastReadAt": new Date() } }
+                { $set: { "members.$.lastReadAt": new Date() } },
             );
 
             // ✅ 2. Find messages that are newer than user’s previous lastReadAt
             const member = chat.members.find(
-                (m) => m.user.toString() === userId
+                (m) => m.user.toString() === userId,
             );
             const previousLastReadAt = member?.lastReadAt || new Date(0);
 
@@ -201,7 +200,7 @@ export default (io: Server, socket: Socket) => {
                 // Note: this is simplistic — ideally you track seen per user in Message if you want group seen-by-lists
                 await MessageModel.updateMany(
                     { _id: { $in: unseenMessages.map((m) => m._id) } },
-                    { $set: { status: "seen" } }
+                    { $set: { status: "seen" } },
                 );
 
                 // ✅ 4. Emit updates to chat room and to others’ sockets
@@ -238,18 +237,18 @@ export default (io: Server, socket: Socket) => {
 
             // check if user already reacted with same emoji
             const existing = message.reactions.find(
-                (r) => r.user.toString() === userId && r.emoji === emoji
+                (r) => r.user.toString() === userId && r.emoji === emoji,
             );
 
             if (existing) {
                 // toggle off → remove
                 message.reactions = message.reactions.filter(
-                    (r) => !(r.user.toString() === userId && r.emoji === emoji)
+                    (r) => !(r.user.toString() === userId && r.emoji === emoji),
                 );
             } else {
                 // replace old emoji if user reacted with different one
                 message.reactions = message.reactions.filter(
-                    (r) => r.user.toString() !== userId
+                    (r) => r.user.toString() !== userId,
                 );
 
                 // push new reaction
@@ -280,7 +279,7 @@ export default (io: Server, socket: Socket) => {
                 {
                     $pull: { reactions: { user: userId } },
                 },
-                { new: true }
+                { new: true },
             );
 
             if (!message) return;

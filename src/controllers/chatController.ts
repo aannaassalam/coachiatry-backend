@@ -20,6 +20,30 @@ const s3 = new S3Client({
 });
 const publicBucketName = process.env.AWS_BUCKET_NAME || "";
 
+export async function createDirectChatIfNotExists(
+    userA: mongoose.Types.ObjectId,
+    userB: mongoose.Types.ObjectId,
+    createdBy: mongoose.Types.ObjectId,
+) {
+    const existing = await ChatModel.findOne({
+        type: "direct",
+        "members.user": { $all: [userA, userB] },
+        $expr: { $eq: [{ $size: "$members" }, 2] },
+    });
+
+    if (existing) return existing;
+
+    return ChatModel.create({
+        type: "direct",
+        createdBy,
+        members: [
+            { user: userA, role: "member" },
+            { user: userB, role: "member" },
+        ],
+        isDeletable: false,
+    });
+}
+
 export const getAllConversations = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const userId = req.user?._id;
@@ -175,15 +199,20 @@ export const getAllConversations = catchAsync(
             },
             { $project: { memberUsers: 0, unread: 0, myData: 0 } },
 
-            // 7️⃣ Sort chats by recent activity
-            // {
-            //     $addFields: {
-            //         sortTimestamp: {
-            //             $ifNull: ["$lastMessage.createdAt", "$updatedAt"],
-            //         },
-            //     },
-            // },
-            { $sort: { "lastMessage.createdAt": -1 } },
+            {
+                $addFields: {
+                    sortTimestamp: {
+                        $ifNull: ["$lastMessage.createdAt", "$createdAt"],
+                    },
+                },
+            },
+
+            // 8️⃣ Sort by activity
+            {
+                $sort: {
+                    sortTimestamp: -1,
+                },
+            },
 
             // 8️⃣ Pagination
             { $skip: skip },
@@ -208,7 +237,7 @@ export const getAllConversations = catchAsync(
                 totalCount: total,
             },
         });
-    }
+    },
 );
 
 export const getConversation = catchAsync(
@@ -276,9 +305,9 @@ export const getConversation = catchAsync(
             res,
             200,
             "Conversations retrieved successfully",
-            conversation[0]
+            conversation[0],
         );
-    }
+    },
 );
 
 export const getAllConversationsByCoach = catchAsync(
@@ -310,7 +339,7 @@ export const getAllConversationsByCoach = catchAsync(
                                     $eq: [
                                         "$$m.user",
                                         Types.ObjectId.createFromHexString(
-                                            userId
+                                            userId,
                                         ),
                                     ],
                                 },
@@ -376,7 +405,7 @@ export const getAllConversationsByCoach = catchAsync(
                                             $ne: [
                                                 "$sender",
                                                 Types.ObjectId.createFromHexString(
-                                                    userId
+                                                    userId,
                                                 ),
                                             ],
                                         },
@@ -454,15 +483,20 @@ export const getAllConversationsByCoach = catchAsync(
             },
             { $project: { memberUsers: 0, unread: 0, myData: 0 } },
 
-            // 7️⃣ Sort chats by recent activity
-            // {
-            //     $addFields: {
-            //         sortTimestamp: {
-            //             $ifNull: ["$lastMessage.createdAt", "$updatedAt"],
-            //         },
-            //     },
-            // },
-            { $sort: { "lastMessage.createdAt": -1 } },
+            {
+                $addFields: {
+                    sortTimestamp: {
+                        $ifNull: ["$lastMessage.createdAt", "$createdAt"],
+                    },
+                },
+            },
+
+            // 8️⃣ Sort by activity
+            {
+                $sort: {
+                    sortTimestamp: -1,
+                },
+            },
 
             // 8️⃣ Pagination
             { $skip: skip },
@@ -487,7 +521,7 @@ export const getAllConversationsByCoach = catchAsync(
                 totalCount: total,
             },
         });
-    }
+    },
 );
 
 export const startChatMultipartUpload = catchAsync(
@@ -496,7 +530,7 @@ export const startChatMultipartUpload = catchAsync(
 
         if (!fileName || !fileType) {
             return next(
-                new AppError("Missing fileName, fileType or path", 400)
+                new AppError("Missing fileName, fileType or path", 400),
             );
         }
 
@@ -512,7 +546,7 @@ export const startChatMultipartUpload = catchAsync(
             uploadId: response.uploadId,
             key: response.key,
         });
-    }
+    },
 );
 
 // 2️⃣ Get pre-signed URLs for parts
@@ -528,7 +562,7 @@ export const chatPartUrls = catchAsync(
         return sendResponse(res, 200, "Presigned part URLs generated", {
             urls,
         });
-    }
+    },
 );
 
 // 3️⃣ Complete upload
@@ -542,7 +576,7 @@ export const chatUploadComplete = catchAsync(
 
         const fileUrl = await multipartComplete({ uploadId, key, parts });
         return sendResponse(res, 200, "Upload complete", { fileUrl });
-    }
+    },
 );
 
 export const createGroup = catchAsync(
@@ -586,7 +620,7 @@ export const createGroup = catchAsync(
         }
 
         sendResponse(res, 200, "Group created successfully", group);
-    }
+    },
 );
 
 export const editGroup = catchAsync(
@@ -602,24 +636,24 @@ export const editGroup = catchAsync(
 
         const isOwner =
             currentGroup.members.find(
-                (_mem) => _mem.user.toString() === userId.toString()
+                (_mem) => _mem.user.toString() === userId.toString(),
             ).role === "owner";
         if (!isOwner) {
             throw new AppError(
                 "Edit can only be made by owner of the group",
-                403
+                403,
             );
         }
 
         const existingMembers = currentGroup.members.map((_mem) =>
-            _mem.user.toString()
+            _mem.user.toString(),
         );
         const toAdd = members.filter(
-            (_mem: string) => !existingMembers.includes(_mem)
+            (_mem: string) => !existingMembers.includes(_mem),
         );
         const toRemove = existingMembers.filter(
             (_mem: string) =>
-                _mem !== userId.toString() && !members.includes(_mem)
+                _mem !== userId.toString() && !members.includes(_mem),
         );
 
         const updatedMembers = [
@@ -627,7 +661,7 @@ export const editGroup = catchAsync(
             ...currentGroup.members.filter(
                 (m) =>
                     m.user.toString() === userId.toString() ||
-                    !toRemove.includes(m.user.toString())
+                    !toRemove.includes(m.user.toString()),
             ),
 
             // add new ones with default role & joinedAt
@@ -666,7 +700,7 @@ export const editGroup = catchAsync(
         }
 
         sendResponse(res, 200, "Group edited successfully", group);
-    }
+    },
 );
 
 export const leaveGroup = catchAsync(
@@ -681,10 +715,10 @@ export const leaveGroup = catchAsync(
 
         const group = await ChatModel.findByIdAndUpdate(chatId, {
             members: currentGroup.members.filter(
-                (m) => m.user.toString() !== userId.toString()
+                (m) => m.user.toString() !== userId.toString(),
             ),
         });
 
         sendResponse(res, 200, "Group left successfully", group);
-    }
+    },
 );
