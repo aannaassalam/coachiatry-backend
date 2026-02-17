@@ -40,7 +40,7 @@ export async function createDirectChatIfNotExists(
             { user: userA, role: "member" },
             { user: userB, role: "member" },
         ],
-        isDeletable: false,
+        isDeletable: true,
     });
 }
 
