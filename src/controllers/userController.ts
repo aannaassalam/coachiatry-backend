@@ -169,16 +169,13 @@ export const addWatchersByLink = catchAsync(
         if (!sharer.sharedViewers.includes(currentUserId)) {
             sharer.sharedViewers.push(currentUserId);
             await sharer.save();
-
-            await ChatModel.create({
-                members: [
-                    { user: sharer._id, role: "member" },
-                    { user: currentUserId, role: "member" },
-                ],
-                type: "direct",
-                createdBy: sharer._id,
-            });
         }
+
+        await createDirectChatIfNotExists(
+            sharer._id,
+            currentUserId,
+            sharer._id,
+        );
 
         delete sharer._id;
         delete sharer.id;
@@ -197,15 +194,14 @@ export const addWatchersById = catchAsync(
             $addToSet: { sharedViewers: { $each: userIds } },
         });
 
-        await ChatModel.insertMany(
-            userIds.map((id: string) => ({
-                members: [
-                    { user: currentUser, role: "member" },
-                    { user: id, role: "member" },
-                ],
-                type: "direct",
-                createdBy: currentUser,
-            })),
+        await Promise.all(
+            userIds.map((id: string) =>
+                createDirectChatIfNotExists(
+                    currentUser,
+                    new mongoose.Types.ObjectId(id),
+                    currentUser,
+                ),
+            ),
         );
 
         sendResponse(res, 200, "Watchers added successfully!");

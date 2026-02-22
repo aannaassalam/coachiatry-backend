@@ -50,7 +50,7 @@ export const messageWorker = new Worker(
 
             const next = getNextOccurrence(
                 template.scheduledAt,
-                template.repeat
+                template.repeat,
             );
 
             // Update the original schedule
@@ -73,9 +73,9 @@ export const messageWorker = new Worker(
             senderId: template.sender.toString(),
             message: template,
         });
-        io.to(String(template.chat)).emit("new_message", sentMessage);
+        io?.to(String(template.chat)).emit("new_message", sentMessage);
     },
-    { connection: redisConnection }
+    { connection: redisConnection },
 );
 
 messageWorker.on("completed", (job) => {

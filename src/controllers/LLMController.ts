@@ -28,6 +28,14 @@ import { buildJsonText } from "../ai/native/jsonHelpers";
 const makeTmpId = () =>
     `tmp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
+const DEFAULT_FALLBACK_TEXT =
+    "I'm here and ready to help. Please try your request again or ask a new question.";
+
+const toSafeHtml = (text: string, fallback = DEFAULT_FALLBACK_TEXT) => {
+    const safe = (text || "").trim() || fallback;
+    return safe.startsWith("<") ? safe : toHtmlParagraph(safe);
+};
+
 const SYSTEM_STYLE_GUIDE = `
 You are an AI assistant that generates strict and valid HTML.
 
@@ -178,10 +186,7 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
             (chosenAction === "summarize" || chosenAction === "chat") &&
             functionCalls.length === 0
         ) {
-            const html =
-                textOutput && textOutput.trim().startsWith("<")
-                    ? textOutput
-                    : toHtmlParagraph(textOutput);
+            const html = toSafeHtml(textOutput);
             sessionStore.appendTurn(sessionId, "model", html);
             res.set("X-Session-Id", sessionId);
             res.set("Access-Control-Expose-Headers", "X-Session-Id");
@@ -335,10 +340,7 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
         }
 
         // Fallback: textual HTML
-        const html =
-            textOutput && textOutput.trim().startsWith("<")
-                ? textOutput
-                : toHtmlParagraph(textOutput);
+        const html = toSafeHtml(textOutput);
         sessionStore.appendTurn(sessionId, "model", html);
         res.set("X-Session-Id", sessionId);
         res.set("Access-Control-Expose-Headers", "X-Session-Id");
@@ -526,11 +528,9 @@ ${transcriptText}
         }
 
         // For summaries: produce HTML from text output, sanitize and enforce rules
-        const rawHtml =
-            textOutput && textOutput.trim().startsWith("<")
-                ? textOutput
-                : toHtmlParagraph(textOutput);
-        const safe = enforceHtmlRules(sanitizeHtml(rawHtml)) || "<p></p>";
+        const rawHtml = toSafeHtml(textOutput);
+        const safe =
+            enforceHtmlRules(sanitizeHtml(rawHtml)) || toSafeHtml(textOutput);
 
         res.set("X-Session-Id", sessionId);
         res.set("Access-Control-Expose-Headers", "X-Session-Id");
