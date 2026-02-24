@@ -9,8 +9,9 @@ export async function buildContext(opts: {
     userId: string;
     page: PageKind;
     id?: string; // documentId for document, chatId for chat
+    chatDateFrom?: Date; // optional lower bound when filtering chat history
 }) {
-    const { userId, page, id } = opts;
+    const { userId, page, id, chatDateFrom } = opts;
 
     const [tasksRaw, documentsRaw, categories] = await Promise.all([
         TaskModel.find({ user: userId })
@@ -70,7 +71,12 @@ export async function buildContext(opts: {
     }
 
     if (page === "chat" && id) {
-        const messages = await MessageModel.find({ chat: id, type: "text" })
+        const messageQuery: any = { chat: id, type: "text" };
+        if (chatDateFrom) {
+            messageQuery.createdAt = { $gte: chatDateFrom };
+        }
+
+        const messages = await MessageModel.find(messageQuery)
             .populate("sender")
             .sort({ createdAt: 1 })
             .lean();

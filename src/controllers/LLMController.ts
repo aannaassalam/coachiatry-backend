@@ -62,6 +62,7 @@ Contextual behavior:
   - Do not reference or rely on global workspace data beyond the focused chat when performing these actions.
   - When creating a task or document from a focused chat, use only the relevant content of that chat as context. Do not infer, assume, or create information that is not explicitly present in the chat content.
   - Never create or suggest any additional tasks, subtasks, or documents that are not directly supported by the focused chat context. All generated output must originate solely from the provided chat content.
+  - If the action is "chat" on a chat page, prioritize extracting actionable tasks from the focused chat messages; prefer calling create_tasks with concrete, well-formed tasks instead of returning a brief summary. If no actionable items exist or no messages fall in the requested time window, respond with a short HTML message stating that no tasks were found for the selected period.
 - If no "focusedChat" object is provided, ignore the above chat-specific restrictions and operate using the general workspace context.
 
 Tool usage expectations:
@@ -75,6 +76,38 @@ Response constraints:
 - Never output JSON to the user unless explicitly returning a tool function payload.
 - Always produce complete and valid HTML markup.
 `.trim();
+
+// Translate relative chat window phrases into a Date lower bound for chat pages
+const deriveChatDateFrom = (
+    query: string,
+    explicitAction?: string,
+): Date | undefined => {
+    const lowered = (query || "").toLowerCase();
+    const isChat =
+        (explicitAction || "").toLowerCase() === "chat" ||
+        (!explicitAction && lowered.includes("chat"));
+    if (!isChat) return undefined;
+
+    const now = new Date();
+    const windowMap: Record<string, number> = {
+        "last 2 days": 2,
+        "last two days": 2,
+        "last 7 days": 7,
+        "last seven days": 7,
+        "last 2 weeks": 14,
+        "last two weeks": 14,
+        "last month": 30,
+    };
+
+    for (const [phrase, days] of Object.entries(windowMap)) {
+        if (lowered.includes(phrase)) {
+            const d = new Date(now);
+            d.setDate(now.getDate() - days);
+            return d;
+        }
+    }
+    return undefined;
+};
 
 export const aiController = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
@@ -94,7 +127,13 @@ export const aiController = catchAsync(
         const session = await sessionStore.upsert(sessionId, userId);
 
         // Build page‑scoped workspace context
-        const workspaceContext = await buildContext({ userId, page, id });
+        const chatDateFrom = deriveChatDateFrom(query, explicitAction);
+        const workspaceContext = await buildContext({
+            userId,
+            page,
+            id,
+            chatDateFrom,
+        });
 
         // Intent detection
         const intentResponse = await ai.models.generateContent({
@@ -134,20 +173,16 @@ export const aiController = catchAsync(
 Action: ${chosenAction}
 Page: ${page}${id ? `\nId: ${id}` : ""}
 User query: ${query || "(no query provided)"}
+Chat window: ${chatDateFrom ? chatDateFrom.toISOString() : "(all time)"}
 
 
 WorkspaceContext (compact):
 ${JSON.stringify(workspaceContext).slice(0, 40000)}
 `.trim();
 
-        const tools =
-            chosenAction === "summarize" || chosenAction === "chat"
-                ? undefined
-                : {
-                      tools: [
-                          { functionDeclarations: buildToolDeclarations(Type) },
-                      ],
-                  };
+        const tools = {
+            tools: [{ functionDeclarations: buildToolDeclarations(Type) }],
+        };
 
         const contents: any[] = [
             { role: "user", parts: [{ text: systemPrompt }] },
@@ -181,19 +216,7 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
         // Update session memory with the latest user query and assistant draft (best effort)
         if (query) sessionStore.appendTurn(sessionId, "user", query);
 
-        // Early return for chat/summarize without tool calls
-        if (
-            (chosenAction === "summarize" || chosenAction === "chat") &&
-            functionCalls.length === 0
-        ) {
-            const html = toSafeHtml(textOutput);
-            sessionStore.appendTurn(sessionId, "model", html);
-            res.set("X-Session-Id", sessionId);
-            res.set("Access-Control-Expose-Headers", "X-Session-Id");
-            return res.json({ type: "text", data: html });
-        }
-
-        // Handle first tool call only for now
+        // Handle first tool call only for now; if none, fall back to text
         if (functionCalls.length > 0) {
             const fn = functionCalls[0];
             let args = fn.args ?? fn.arguments ?? fn.payload ?? {};
@@ -213,20 +236,20 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                         filtered = filtered.filter(
                             (t: any) =>
                                 String(t.priority).toLowerCase() ===
-                                String(filters.priority).toLowerCase()
+                                String(filters.priority).toLowerCase(),
                         );
                     if (filters.status)
                         filtered = filtered.filter(
                             (t: any) =>
                                 String(t.status).toLowerCase() ===
-                                String(filters.status).toLowerCase()
+                                String(filters.status).toLowerCase(),
                         );
                     if (filters.tag)
                         filtered = filtered.filter(
                             (t: any) =>
                                 String(t.category).toLowerCase() ===
                                     String(filters.tag).toLowerCase() ||
-                                String(t.categoryId) === String(filters.tag)
+                                String(t.categoryId) === String(filters.tag),
                         );
                     if (filters.date) {
                         const target = new Date(filters.date).toDateString();
@@ -236,7 +259,7 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                                     target ||
                                 (t.dueDate &&
                                     new Date(t.dueDate).toDateString() ===
-                                        target)
+                                        target),
                         );
                     }
                     if (filters.limit)
@@ -254,13 +277,13 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                             (d: any) =>
                                 String(d.tag).toLowerCase() ===
                                     String(filters.tag).toLowerCase() ||
-                                String(d.tagId) === String(filters.tag)
+                                String(d.tagId) === String(filters.tag),
                         );
                     if (filters.date) {
                         const target = new Date(filters.date).toDateString();
                         filtered = filtered.filter(
                             (d: any) =>
-                                new Date(d.createdAt).toDateString() === target
+                                new Date(d.createdAt).toDateString() === target,
                         );
                     }
                     if (filters.limit)
@@ -272,7 +295,7 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                     return res.json({ type: "text", data: html });
                 }
                 const html = toHtmlParagraph(
-                    `Unknown fetch type: ${String(type)}`
+                    `Unknown fetch type: ${String(type)}`,
                 );
                 sessionStore.appendTurn(sessionId, "model", html);
                 res.set("X-Session-Id", sessionId);
@@ -287,7 +310,7 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                     title: t.title || "Untitled task",
                     description: t.description || "",
                     priority: ["low", "medium", "high"].includes(
-                        String(t.priority)
+                        String(t.priority),
                     )
                         ? t.priority
                         : "medium",
@@ -310,7 +333,7 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                 sessionStore.appendTurn(
                     sessionId,
                     "model",
-                    JSON.stringify({ type: "tasks", count: normalized.length })
+                    JSON.stringify({ type: "tasks", count: normalized.length }),
                 );
                 res.set("X-Session-Id", sessionId);
                 res.set("Access-Control-Expose-Headers", "X-Session-Id");
@@ -331,12 +354,28 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                 sessionStore.appendTurn(
                     sessionId,
                     "model",
-                    JSON.stringify({ type: "document", title: doc.title })
+                    JSON.stringify({ type: "document", title: doc.title }),
                 );
                 res.set("X-Session-Id", sessionId);
                 res.set("Access-Control-Expose-Headers", "X-Session-Id");
                 return res.json({ type: "document", data: doc });
             }
+        }
+
+        // If on chat page with no tool calls, surface explicit no-task message
+        if (
+            page === "chat" &&
+            chosenAction === "chat" &&
+            workspaceContext.focusChat &&
+            functionCalls.length === 0
+        ) {
+            const html = toHtmlParagraph(
+                "No tasks can be created from the selected chat window. Try another time range or ask a new question.",
+            );
+            sessionStore.appendTurn(sessionId, "model", html);
+            res.set("X-Session-Id", sessionId);
+            res.set("Access-Control-Expose-Headers", "X-Session-Id");
+            return res.json({ type: "text", data: html });
         }
 
         // Fallback: textual HTML
@@ -345,7 +384,7 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
         res.set("X-Session-Id", sessionId);
         res.set("Access-Control-Expose-Headers", "X-Session-Id");
         return res.json({ type: "text", data: html });
-    }
+    },
 );
 
 const SYSTEM_STYLE_GUIDE_FOR_TRANSCRIPTS = `
@@ -446,7 +485,7 @@ ${transcriptText}
                               functionDeclarations: [
                                   createTranscriptsTasksDeclaration(
                                       Type,
-                                      categoryCatalog
+                                      categoryCatalog,
                                   ),
                               ],
                           },
@@ -497,14 +536,14 @@ ${transcriptText}
                     const coercedCategory = coerceCategory(
                         t.category,
                         categoryCatalog,
-                        fallbackCategory
+                        fallbackCategory,
                     );
                     return {
                         tempId: String(t.tempId || makeTmpId()),
                         title: t.title || "Untitled task",
                         description: t.description || "",
                         priority: ["low", "medium", "high"].includes(
-                            String(t.priority)
+                            String(t.priority),
                         )
                             ? t.priority
                             : "medium",
@@ -535,7 +574,7 @@ ${transcriptText}
         res.set("X-Session-Id", sessionId);
         res.set("Access-Control-Expose-Headers", "X-Session-Id");
         return res.json({ type: "text", data: safe });
-    }
+    },
 );
 
 const SYSTEM_NATIVE_GUIDE = `
@@ -688,6 +727,17 @@ When user requests task creation:
 - Then output a JSON UI tree representing the list of created tasks
 - No HTML ever
 
+CHAT TASK PRIORITY (important):
+- If page = "chat", prioritize generating actionable tasks from the focused chat window.
+- For chat actions, prefer calling create_tasks instead of replying with a generic summary.
+- If no actionable items exist in the selected chat window, return a short JSON view that tells the user no tasks could be created for that window (do not return a generic summary).
+- When create_tasks is used, respond with a top-level object: { "type": "tasks", "data": { "tasks": [...] } } so the client can render selectable tasks.
+- When action is "chat":
+  * You MUST derive tasks ONLY from the focused chat messages within the provided chat window.
+  * Do NOT invent, hallucinate, or import tasks from outside the focused chat.
+  * If the focused chat has no actionable items, return a tasks payload with an empty tasks array and a brief message explaining that no tasks could be created for this chat window.
+  * You MUST call create_tasks; do not return a free-text JSON view when action is chat on a chat page.
+
 =========================================================
 ======================== SUMMARY MODE ====================
 =========================================================
@@ -825,7 +875,13 @@ export const aiNativeController = catchAsync(
         // ------------------------------------------------------------
         // WORKSPACE (tasks, docs, categories)
         // ------------------------------------------------------------
-        const workspaceContext = await buildContext({ userId, page, id });
+        const chatDateFrom = deriveChatDateFrom(query, explicitAction);
+        const workspaceContext = await buildContext({
+            userId,
+            page,
+            id,
+            chatDateFrom,
+        });
 
         // ------------------------------------------------------------
         // INTENT DETECTION (self-healing fallback)
@@ -862,6 +918,10 @@ export const aiNativeController = catchAsync(
         }
 
         const chosenAction = String(explicitAction ?? inferredAction);
+        const effectiveAction =
+            page === "chat" || chosenAction === "chat"
+                ? "create_tasks"
+                : chosenAction;
 
         // ------------------------------------------------------------
         // SYSTEM PROMPT
@@ -869,7 +929,7 @@ export const aiNativeController = catchAsync(
         let systemPrompt = SYSTEM_NATIVE_GUIDE;
 
         // Force doc creation instructions
-        if (chosenAction === "create_document") {
+        if (effectiveAction === "create_document") {
             systemPrompt += `
 IMPORTANT:
 You MUST:
@@ -891,27 +951,24 @@ Available categories: ${JSON.stringify(workspaceContext.categories)}
         }));
 
         const userPrompt = `
-Action: ${chosenAction}
+Action: ${effectiveAction}
 Page: ${page}
 Id: ${id ?? "(none)"}
 Platform: native
 User query: ${query || "(none)"}
+Chat window: ${chatDateFrom ? chatDateFrom.toISOString() : "(all time)"}
 
 WorkspaceContext:
 ${JSON.stringify(workspaceContext).slice(0, 40000)}
 `.trim();
 
-        const tools =
-            chosenAction === "chat" || chosenAction === "summarize"
-                ? undefined
-                : {
-                      tools: [
-                          { functionDeclarations: buildToolDeclarations(Type) },
-                      ],
-                  };
+        const tools = {
+            tools: [{ functionDeclarations: buildToolDeclarations(Type) }],
+        };
 
         const contents: any[] = [
             { role: "user", parts: [{ text: finalSystemPrompt }] },
+            // replay a few recent turns for coherence
             ...sessionTurns,
             { role: "user", parts: [{ text: userPrompt }] },
         ];
@@ -995,14 +1052,14 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                         filtered = filtered.filter(
                             (t: any) =>
                                 String(t.priority).toLowerCase() ===
-                                String(filters.priority).toLowerCase()
+                                String(filters.priority).toLowerCase(),
                         );
                     }
                     if (filters.status) {
                         filtered = filtered.filter(
                             (t: any) =>
                                 String(t.status).toLowerCase() ===
-                                String(filters.status).toLowerCase()
+                                String(filters.status).toLowerCase(),
                         );
                     }
 
@@ -1011,7 +1068,7 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                     sessionStore.appendTurn(
                         sessionId,
                         "model",
-                        JSON.stringify(json)
+                        JSON.stringify(json),
                     );
                     return res.json({ type: "json", data: json });
                 }
@@ -1023,7 +1080,7 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                     sessionStore.appendTurn(
                         sessionId,
                         "model",
-                        JSON.stringify(json)
+                        JSON.stringify(json),
                     );
                     return res.json({ type: "json", data: json });
                 }
@@ -1033,10 +1090,52 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
             // CREATE TASKS
             // ================================
             if (fn.name === "create_tasks") {
+                const tasksOut = Array.isArray(args.tasks) ? args.tasks : [];
+                if (tasksOut.length === 0) {
+                    const payload = {
+                        type: "json",
+                        data: {
+                            type: "view",
+                            style: {
+                                padding: 12,
+                                gap: 8,
+                                backgroundColor: "secondary",
+                                borderRadius: "md",
+                            },
+                            children: [
+                                {
+                                    type: "text",
+                                    text: "No tasks were generated from this chat.",
+                                    style: {
+                                        fontFamily: "Archivo-SemiBold",
+                                        fontSize: 17,
+                                        color: "text",
+                                    },
+                                },
+                                {
+                                    type: "text",
+                                    text: "Try a different date range",
+                                    style: {
+                                        fontFamily: "Lato-Regular",
+                                        fontSize: 14,
+                                        color: "gray",
+                                    },
+                                },
+                            ],
+                        },
+                    };
+                    sessionStore.appendTurn(
+                        sessionId,
+                        "model",
+                        JSON.stringify(payload),
+                    );
+                    return res.json(payload);
+                }
+
                 return res.json({
                     type: "tasks",
                     data: {
-                        tasks: Array.isArray(args.tasks) ? args.tasks : [],
+                        tasks: tasksOut,
                     },
                 });
             }
@@ -1093,13 +1192,100 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
             }
         }
 
+        // If on chat page with no tool calls, surface explicit no-task message
+        if (
+            page === "chat" &&
+            effectiveAction === "create_tasks" &&
+            workspaceContext.focusChat &&
+            functionCalls.length === 0
+        ) {
+            // Retry with a constrained prompt to force task extraction
+            const retryPrompt = `${finalSystemPrompt}\n\nAction: create_tasks\nSTRICT: Extract tasks ONLY from focusedChat messages within the chat window. If any actionable items exist, call create_tasks with them. If none, return {\"type\":\"tasks\",\"data\":{\"tasks\":[],\"message\":\"No tasks can be created from the selected chat window.\"}}.`;
+
+            const retryResponse = await ai.models.generateContent({
+                model: "gemini-2.5-flash",
+                contents: [{ role: "user", parts: [{ text: retryPrompt }] }],
+                config: {
+                    tools: [
+                        { functionDeclarations: buildToolDeclarations(Type) },
+                    ],
+                },
+            });
+
+            const retryCalls =
+                retryResponse?.functionCalls ||
+                retryResponse?.candidates?.[0]?.content?.parts
+                    ?.map((p: any) => p.function_call)
+                    .filter(Boolean) ||
+                [];
+
+            if (retryCalls.length > 0) {
+                const fn = retryCalls[0];
+                let args: any = fn.args ?? fn.arguments ?? fn.payload ?? {};
+                if (typeof args === "string") {
+                    try {
+                        args = JSON.parse(args);
+                    } catch {
+                        args = {};
+                    }
+                }
+                if (fn.name === "create_tasks") {
+                    return res.json({
+                        type: "tasks",
+                        data: {
+                            tasks: Array.isArray(args.tasks) ? args.tasks : [],
+                        },
+                    });
+                }
+            }
+
+            const payload = {
+                type: "json",
+                data: {
+                    type: "view",
+                    style: {
+                        padding: 12,
+                        gap: 8,
+                        backgroundColor: "secondary",
+                        borderRadius: "md",
+                    },
+                    children: [
+                        {
+                            type: "text",
+                            text: "No tasks were found in this chat window.",
+                            style: {
+                                fontFamily: "Archivo-SemiBold",
+                                fontSize: 17,
+                                color: "text",
+                            },
+                        },
+                        {
+                            type: "text",
+                            text: "Try another date range",
+                            style: {
+                                fontFamily: "Lato-Regular",
+                                fontSize: 14,
+                                color: "gray",
+                            },
+                        },
+                    ],
+                },
+            };
+            sessionStore.appendTurn(
+                sessionId,
+                "model",
+                JSON.stringify(payload),
+            );
+            return res.json(payload);
+        }
+
         // ------------------------------------------------------------
         // FALLBACK UI — If model produced unclear text
         // ------------------------------------------------------------
         let jsonOut: any = null;
         try {
             jsonOut = JSON.parse(
-                textOutput.replaceAll("```json", "").replaceAll("```", "")
+                textOutput.replaceAll("```json", "").replaceAll("```", ""),
             );
         } catch {
             jsonOut = {
@@ -1121,5 +1307,5 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
 
         sessionStore.appendTurn(sessionId, "model", JSON.stringify(jsonOut));
         return res.json({ type: "json", data: jsonOut });
-    }
+    },
 );
