@@ -35,7 +35,7 @@ export const deleteOne = (Model: Model<Document>, options?: Message) =>
 
         if (!doc) {
             return next(
-                new AppError(`No ${Model.modelName} found with that ID`, 404)
+                new AppError(`No ${Model.modelName} found with that ID`, 404),
             );
         }
 
@@ -43,7 +43,7 @@ export const deleteOne = (Model: Model<Document>, options?: Message) =>
             res,
             200,
             options?.message ?? `${Model.modelName} deleted successfully`,
-            null
+            null,
         );
     });
 
@@ -55,7 +55,7 @@ export const updateOne = (Model: Model<Document>, options?: Message) =>
         });
         if (!doc) {
             return next(
-                new AppError(`No ${Model.modelName} found with that ID`, 404)
+                new AppError(`No ${Model.modelName} found with that ID`, 404),
             );
         }
         doc.save({ validateBeforeSave: false });
@@ -63,7 +63,7 @@ export const updateOne = (Model: Model<Document>, options?: Message) =>
             res,
             200,
             options?.message ?? `${Model.modelName} updated successfully`,
-            doc
+            doc,
         );
     });
 
@@ -84,7 +84,7 @@ export const createOne = (Model: Model<Document>, options?: CreateOptions) =>
             res,
             201,
             options?.message ?? `${Model.modelName} created successfully`,
-            doc
+            doc,
         );
     });
 
@@ -94,14 +94,14 @@ export const getOne = (Model: Model<Document>, options?: Message) =>
             ? (req.query.populate as any)?.split(",").join(" ")
             : "";
         let query: Query<Document | null, Document> = Model.findById(
-            req.params.id
+            req.params.id,
         ).populate(populateFields); // Explicitly specify the type of query
 
         const doc = await query.exec(); // Execute the query
 
         if (!doc) {
             return next(
-                new AppError(`No ${Model.modelName} found with that ID`, 404)
+                new AppError(`No ${Model.modelName} found with that ID`, 404),
             );
         }
 
@@ -109,7 +109,7 @@ export const getOne = (Model: Model<Document>, options?: Message) =>
             res,
             200,
             options?.message ?? `${Model.modelName} retrieved successfully`,
-            doc
+            doc,
         );
     });
 
@@ -157,13 +157,13 @@ export const getAll = (Model: Model<Document>, options?: GetAllOptions) =>
             res,
             200,
             options?.message ?? `${Model.modelName} retrieved successfully`,
-            responseData
+            responseData,
         );
     });
 
 export const getAllUnpaginated = (
     Model: Model<Document>,
-    options?: GetAllOptions
+    options?: GetAllOptions,
 ) =>
     catchAsync(async (req: Request, res: Response, next: NextFunction) => {
         let filter = options.additionalFilter ?? {};
@@ -199,7 +199,7 @@ export const getAllUnpaginated = (
             res,
             200,
             options?.message ?? `${Model.modelName} retrieved successfully`,
-            doc
+            doc,
         );
     });
 
@@ -208,7 +208,7 @@ export const sendContactUsMail = catchAsync(
         const { name, email, phone, companyName, message } = req.body;
         if (!name || !email || !message) {
             return next(
-                new AppError("Please provide all required fields", 400)
+                new AppError("Please provide all required fields", 400),
             );
         }
         await sendEmail({
@@ -217,7 +217,7 @@ export const sendContactUsMail = catchAsync(
             html: contactUsHTML(name, email, phone, companyName, message),
         });
         sendResponse(res, 200, "Mail sent successfully", null);
-    }
+    },
 );
 
 export const downloadReport = async (
@@ -225,7 +225,7 @@ export const downloadReport = async (
     condition: any, // Condition to apply to the query
     format: string, // The format of the report (csv or pdf)
     fields: any[], // Fields to include in the report
-    heading: string = "Report"
+    heading: string = "Report",
 ) => {
     try {
         const foundTx = await Model.find(condition); // Query the model with the passed condition
@@ -243,7 +243,7 @@ export const downloadReport = async (
         // Handle any errors during report generation
         return new AppError(
             "Error generating transaction report: " + error.message,
-            401
+            401,
         );
     }
 };
@@ -297,7 +297,7 @@ export const downloadReport = async (
 // };
 export const convertCsvToPdf = async (
     csvContent,
-    heading: string = "Report"
+    heading: string = "Report",
 ) => {
     try {
         const pdfDoc = await PDFDocument.create();
@@ -333,7 +333,7 @@ export const convertCsvToPdf = async (
         const colWidths = [];
         table[0].forEach((_, colIndex) => {
             const maxColWidth = Math.max(
-                ...table.map((row) => row[colIndex].length)
+                ...table.map((row) => row[colIndex].length),
             );
             colWidths.push(maxColWidth * fontSize * 0.6 + cellPadding * 2); // estimate width based on character count
         });
@@ -378,7 +378,7 @@ export const convertCsvToPdf = async (
     } catch (error) {
         throw new AppError(
             "Error generating transaction report: " + error.message,
-            401
+            401,
         );
     }
 };

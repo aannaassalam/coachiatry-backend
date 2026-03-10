@@ -5,21 +5,45 @@ import ChatModel from "../model/chatModel";
 import admin from "../utils/firebaseAdmin";
 import { sendMessageNotification } from "../utils/messagingNotifications";
 
-const onlineUsers = new Map<string, string>();
+// Track which users are online (for status checks like "is friend online?")
+const onlineUsers = new Map<string, Set<string>>();
+const socketToUser = new Map<string, string>();
 
 export default (io: Server, socket: Socket) => {
     console.log("Chat socket ready for:", socket.id);
 
     socket.on("user_online", async ({ userId }) => {
-        onlineUsers.set(userId, socket.id);
+        // Clean up any previous mapping for this socket (e.g. re-emitted user_online)
+        const prevUserId = socketToUser.get(socket.id);
+        if (prevUserId && prevUserId !== userId) {
+            onlineUsers.get(prevUserId)?.delete(socket.id);
+            if (!onlineUsers.get(prevUserId)?.size) {
+                onlineUsers.delete(prevUserId);
+            }
+            socket.leave(`user:${prevUserId}`);
+        }
+
+        if (!onlineUsers.has(userId)) {
+            onlineUsers.set(userId, new Set());
+        }
+        onlineUsers.get(userId)!.add(socket.id);
+        socketToUser.set(socket.id, userId);
         socket.data.userId = userId;
-        console.log("🟢 User online:", userId);
+
+        // Join a user-specific room so all devices for this user receive events
+        socket.join(`user:${userId}`);
+
+        // Verify the socket actually joined the room
+        const roomMembers = await io.in(`user:${userId}`).fetchSockets();
+        console.log(
+            `🟢 User online: ${userId}, socket: ${socket.id}, rooms: [${[...socket.rooms]}], user room size: ${roomMembers.length}`,
+        );
 
         const userObjectId =
             mongoose.Types.ObjectId.createFromHexString(userId);
 
         const chats = await ChatModel.find({
-            members: userObjectId,
+            "members.user": userObjectId,
         }).select("_id");
         const chatIds = chats.map((c) => c._id);
 
@@ -64,109 +88,105 @@ export default (io: Server, socket: Socket) => {
 
     // Send message
     socket.on("send_message", async (data) => {
-        // if (data.files.length > 0 && data.type === "video") {
-        //     const thumbnails = await Promise.all(
-        //         data.files.map((_file) =>
-        //             extractAndUploadThumbnail(
-        //                 decodeURIComponent(
-        //                     _file.url.replace(
-        //                         `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/`,
-        //                         ""
-        //                     )
-        //                 )
-        //             )
-        //         )
-        //     );
-        //     data.files = data.files.map((file, i) => {
-        //         file.thumbnailUrl = thumbnails[i];
-        //     });
-        // }
+        try {
+            const message = await MessageModel.create({
+                ...data,
+                sentAt: new Date(),
+                status: "sent",
+            });
 
-        const message = await MessageModel.create({
-            ...data,
-            sentAt: new Date(),
-            status: "sent",
-        });
-        const populatedMessage = await message.populate([
-            {
-                path: "replyTo",
-                populate: {
+            // Extract senderId BEFORE populate (message.sender is still an ObjectId here)
+            const senderId = message.sender.toString();
+
+            const populatedMessage = await message.populate([
+                {
+                    path: "replyTo",
+                    populate: {
+                        path: "sender",
+                    },
+                },
+                {
                     path: "sender",
                 },
-            },
-            {
-                path: "sender",
-            },
-        ]);
+            ]);
 
-        const roomSockets = await io.in(data.chat).fetchSockets();
-        const recipientOnline = roomSockets.some(
-            (s) => s.data?.userId && s.data.userId !== data.sender,
-        );
-
-        if (recipientOnline) {
-            populatedMessage.status = "delivered";
-            await populatedMessage.save();
-        }
-
-        io.to(data.chat).emit("new_message", {
-            ...populatedMessage.toJSON(),
-            tempId: data.tempId,
-        });
-
-        const chat = await ChatModel.findById(data.chat);
-
-        // if (chat?.type === "direct") {
-        //     const recipientSocket = Array.from(
-        //         io.sockets.sockets.values()
-        //     ).find(
-        //         (s) =>
-        //             s.data?.userId ===
-        //             chat.members
-        //                 .find((m) => m.user.toString() !== data.sender)
-        //                 ?.user.toString()
-        //     );
-
-        //     if (recipientSocket) {
-        //         populatedMessage.status = "delivered";
-        //         await populatedMessage.save();
-        //         recipientSocket.emit("new_message", populatedMessage);
-        //     }
-        // } else {
-        //     // group chat
-        //     for (const member of chat.members) {
-        //         if (member.user.toString() !== data.sender.toString()) {
-        //             const receiverSocket = Array.from(
-        //                 io.sockets.sockets.values()
-        //             ).find((s) => s.data?.userId === member.user.toString());
-        //             if (receiverSocket) {
-        //                 receiverSocket.emit("new_message", populatedMessage);
-        //             }
-        //         }
-        //     }
-        // }
-
-        const chatMembers = chat.members.map((m) => m.user.toString());
-
-        for (const memberId of chatMembers) {
-            // Don't notify the sender — they already know
-            if (memberId === data.sender.toString()) continue;
-
-            const socketId = onlineUsers.get(memberId);
-            if (socketId) {
-                io.to(socketId).emit("conversation_updated", {
-                    chatId: chat._id,
-                    lastMessage: populatedMessage,
-                    updatedAt: new Date().toISOString(),
-                });
+            // Check if any recipient is online (anywhere in the app, not just in this chat room)
+            const chat = await ChatModel.findById(data.chat);
+            if (!chat) {
+                console.error(
+                    `❌ send_message: chat not found for id=${data.chat}`,
+                );
+                return;
             }
-        }
 
-        sendMessageNotification({
-            chatId: message.chat.toString(),
-            senderId: (message.sender as any)._id.toString(),
-            message: message,
-        });
+            const chatMembers = chat.members.map((m) =>
+                m.user.toString(),
+            );
+            const otherMembers = chatMembers.filter(
+                (id) => id !== senderId,
+            );
+
+            const recipientOnline = otherMembers.some((memberId) =>
+                onlineUsers.has(memberId),
+            );
+
+            console.log(
+                `📨 send_message: chat=${data.chat}, sender=${senderId}, recipientOnline=${recipientOnline}`,
+            );
+
+            // Update status to "delivered" using updateOne to avoid saving a populated document
+            // (saving a populated doc can throw CastError since sender is a full object, not an ObjectId)
+            if (recipientOnline) {
+                await MessageModel.updateOne(
+                    { _id: message._id },
+                    { $set: { status: "delivered" } },
+                );
+                populatedMessage.status = "delivered";
+            }
+
+            const chatIdStr = data.chat.toString();
+
+            io.to(chatIdStr).emit("new_message", {
+                ...populatedMessage.toJSON(),
+                tempId: data.tempId,
+            });
+
+            const conversationPayload = {
+                chatId: chatIdStr,
+                lastMessage: populatedMessage.toJSON(),
+                updatedAt: new Date().toISOString(),
+            };
+
+            for (const memberId of chatMembers) {
+                const userRoomSockets = await io
+                    .in(`user:${memberId}`)
+                    .fetchSockets();
+                console.log(
+                    `📬 conversation_updated: user:${memberId} has ${userRoomSockets.length} sockets in room`,
+                );
+
+                if (memberId === senderId) {
+                    // For the sender: notify their OTHER devices (not the one that sent)
+                    socket
+                        .to(`user:${memberId}`)
+                        .emit("conversation_updated", conversationPayload);
+                } else {
+                    // For other members: notify all their devices
+                    io.to(`user:${memberId}`).emit(
+                        "conversation_updated",
+                        conversationPayload,
+                    );
+                }
+            }
+
+            sendMessageNotification({
+                chatId: chatIdStr,
+                senderId,
+                message: populatedMessage,
+            });
+        } catch (error) {
+            console.error("❌ send_message error:", error);
+        }
     });
 
     socket.on("mark_seen", async ({ chatId, userId }) => {
@@ -182,7 +202,7 @@ export default (io: Server, socket: Socket) => {
                 { $set: { "members.$.lastReadAt": new Date() } },
             );
 
-            // ✅ 2. Find messages that are newer than user’s previous lastReadAt
+            // ✅ 2. Find messages that are newer than user's previous lastReadAt
             const member = chat.members.find(
                 (m) => m.user.toString() === userId,
             );
@@ -197,32 +217,18 @@ export default (io: Server, socket: Socket) => {
 
             if (unseenMessages.length > 0) {
                 // ✅ 3. Mark those messages as seen (globally)
-                // Note: this is simplistic — ideally you track seen per user in Message if you want group seen-by-lists
                 await MessageModel.updateMany(
                     { _id: { $in: unseenMessages.map((m) => m._id) } },
                     { $set: { status: "seen" } },
                 );
 
-                // ✅ 4. Emit updates to chat room and to others’ sockets
+                // ✅ 4. Emit updates to chat room
                 io.to(chatId).emit("message_seen_update_bulk", {
                     chatId,
                     userId,
                     messageIds: unseenMessages.map((m) => m._id),
                 });
             }
-
-            // ✅ 5. Optional: emit a conversation_updated so that other users’ chat lists can reflect “seen” state
-            // const onlineUsersMap = onlineUsers; // from your existing global map
-            // for (const member of chat.members) {
-            //     const socketId = onlineUsersMap.get(member.user.toString());
-            //     if (socketId && member.user.toString() !== userId) {
-            //         io.to(socketId).emit("conversation_updated", {
-            //             chatId: chat._id,
-            //             lastSeenBy: userId,
-            //             updatedAt: new Date().toISOString(),
-            //         });
-            //     }
-            // }
         } catch (error) {
             console.error("❌ mark_seen error:", error);
         }
@@ -304,10 +310,21 @@ export default (io: Server, socket: Socket) => {
 
     // Disconnect
     socket.on("disconnect", () => {
-        const userId = socket.data.userId;
+        const userId = socketToUser.get(socket.id);
         if (!userId) return;
-        onlineUsers.delete(userId);
-        console.log("🔴 User offline:", userId);
-        io.emit("user_status_update", { userId, status: "offline" });
+
+        socketToUser.delete(socket.id);
+        onlineUsers.get(userId)?.delete(socket.id);
+
+        console.log(
+            `🔌 Socket disconnected: ${socket.id}, user: ${userId}, remaining: ${onlineUsers.get(userId)?.size ?? 0}`,
+        );
+
+        if (!onlineUsers.get(userId)?.size) {
+            onlineUsers.delete(userId);
+            console.log("🔴 User offline:", userId);
+            io.emit("user_status_update", { userId, status: "offline" });
+        }
+        // Note: Socket.IO automatically removes the socket from all rooms on disconnect
     });
 };
