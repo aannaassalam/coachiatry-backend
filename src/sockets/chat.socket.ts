@@ -68,7 +68,7 @@ export default (io: Server, socket: Socket) => {
     socket.on("join_room", ({ chatId, userId, friendId, isGroup }) => {
         socket.join(chatId);
         socket.data.userId = userId;
-        // console.log(`👥 ${userId} joined ${chatId}`);
+        socket.data.activeChatId = chatId;
 
         // Tell the current user if their friend is online
         if (!isGroup) {
@@ -83,20 +83,62 @@ export default (io: Server, socket: Socket) => {
     // Leave room
     socket.on("leave_room", ({ chatId, userId }) => {
         socket.leave(chatId);
+        socket.data.activeChatId = null;
         socket.to(chatId).emit("user_left", { userId });
     });
 
     // Send message
-    socket.on("send_message", async (data) => {
+    socket.on("send_message", async (data, callback) => {
         try {
+            // Validate required fields
+            if (!data.chat || !data.sender) {
+                if (typeof callback === "function") {
+                    callback({
+                        success: false,
+                        error: "Missing required fields: chat, sender",
+                    });
+                }
+                return;
+            }
+
+            // Verify sender is a member of the chat
+            const chat = await ChatModel.findById(data.chat);
+            if (!chat) {
+                console.error(
+                    `❌ send_message: chat not found for id=${data.chat}`,
+                );
+                if (typeof callback === "function") {
+                    callback({ success: false, error: "Chat not found" });
+                }
+                return;
+            }
+
+            const senderId = data.sender.toString();
+            const chatMembers = chat.members.map((m) => m.user.toString());
+
+            if (!chatMembers.includes(senderId)) {
+                console.error(
+                    `❌ send_message: user ${senderId} is not a member of chat ${data.chat}`,
+                );
+                if (typeof callback === "function") {
+                    callback({
+                        success: false,
+                        error: "You are not a member of this chat",
+                    });
+                }
+                return;
+            }
+
             const message = await MessageModel.create({
-                ...data,
+                chat: data.chat,
+                sender: data.sender,
+                type: data.type || "text",
+                content: data.content,
+                files: data.files,
+                replyTo: data.replyTo,
                 sentAt: new Date(),
                 status: "sent",
             });
-
-            // Extract senderId BEFORE populate (message.sender is still an ObjectId here)
-            const senderId = message.sender.toString();
 
             const populatedMessage = await message.populate([
                 {
@@ -110,18 +152,6 @@ export default (io: Server, socket: Socket) => {
                 },
             ]);
 
-            // Check if any recipient is online (anywhere in the app, not just in this chat room)
-            const chat = await ChatModel.findById(data.chat);
-            if (!chat) {
-                console.error(
-                    `❌ send_message: chat not found for id=${data.chat}`,
-                );
-                return;
-            }
-
-            const chatMembers = chat.members.map((m) =>
-                m.user.toString(),
-            );
             const otherMembers = chatMembers.filter(
                 (id) => id !== senderId,
             );
@@ -134,8 +164,7 @@ export default (io: Server, socket: Socket) => {
                 `📨 send_message: chat=${data.chat}, sender=${senderId}, recipientOnline=${recipientOnline}`,
             );
 
-            // Update status to "delivered" using updateOne to avoid saving a populated document
-            // (saving a populated doc can throw CastError since sender is a full object, not an ObjectId)
+            // Update status to "delivered" if any recipient is online
             if (recipientOnline) {
                 await MessageModel.updateOne(
                     { _id: message._id },
@@ -146,6 +175,24 @@ export default (io: Server, socket: Socket) => {
 
             const chatIdStr = data.chat.toString();
 
+            // Update lastMessage on the chat document
+            await ChatModel.updateOne(
+                { _id: data.chat },
+                {
+                    $set: {
+                        lastMessage: {
+                            message: message._id,
+                            sender: message.sender,
+                            content: message.content,
+                            type: message.type,
+                            status: populatedMessage.status,
+                            sentAt: message.createdAt,
+                        },
+                    },
+                },
+            );
+
+            // Emit new_message to everyone in the chat room
             io.to(chatIdStr).emit("new_message", {
                 ...populatedMessage.toJSON(),
                 tempId: data.tempId,
@@ -157,14 +204,8 @@ export default (io: Server, socket: Socket) => {
                 updatedAt: new Date().toISOString(),
             };
 
+            // Notify all members about conversation update
             for (const memberId of chatMembers) {
-                const userRoomSockets = await io
-                    .in(`user:${memberId}`)
-                    .fetchSockets();
-                console.log(
-                    `📬 conversation_updated: user:${memberId} has ${userRoomSockets.length} sockets in room`,
-                );
-
                 if (memberId === senderId) {
                     // For the sender: notify their OTHER devices (not the one that sent)
                     socket
@@ -179,13 +220,29 @@ export default (io: Server, socket: Socket) => {
                 }
             }
 
+            // Send push notification
             sendMessageNotification({
                 chatId: chatIdStr,
                 senderId,
                 message: populatedMessage,
             });
+
+            // Acknowledge success to the sender
+            if (typeof callback === "function") {
+                callback({
+                    success: true,
+                    messageId: message._id,
+                    status: populatedMessage.status,
+                });
+            }
         } catch (error) {
             console.error("❌ send_message error:", error);
+            if (typeof callback === "function") {
+                callback({
+                    success: false,
+                    error: "Failed to send message",
+                });
+            }
         }
     });
 
@@ -299,13 +356,13 @@ export default (io: Server, socket: Socket) => {
         }
     });
 
-    // Typing indicators
+    // Typing indicators — include chatId so frontend can filter by active chat
     socket.on("typing", ({ chatId, userId }) => {
-        socket.to(chatId).emit("user_typing", { userId });
+        socket.to(chatId).emit("user_typing", { chatId, userId });
     });
 
     socket.on("stop_typing", ({ chatId, userId }) => {
-        socket.to(chatId).emit("user_stop_typing", { userId });
+        socket.to(chatId).emit("user_stop_typing", { chatId, userId });
     });
 
     // Disconnect
