@@ -193,6 +193,14 @@ export const getAllUnpaginated = (
             .limitFields()
             .search()
             .populate();
+
+        if (req.query.limit) {
+            const limit = parseInt(req.query.limit as string, 10);
+            if (!isNaN(limit) && limit > 0) {
+                features.query = features.query.limit(limit);
+            }
+        }
+
         const doc = await features.query;
 
         sendResponse(
