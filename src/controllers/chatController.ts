@@ -49,13 +49,26 @@ export const getAllConversations = catchAsync(
         const userId = req.user?._id;
         if (!userId) return next(new AppError("Unauthorized", 401));
 
+        const userOid = Types.ObjectId.createFromHexString(userId.toString());
         const page = parseInt((req.query.page as string) || "1", 10);
         const limit = parseInt((req.query.limit as string) || "20", 10);
         const skip = (page - 1) * limit;
+        const rawSearch = (req.query.search as string) || "";
+        const search = rawSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
         const pipeline: PipelineStage[] = [
             // 1️⃣ Only chats where this user is a member
-            { $match: { "members.user": userId } },
+            { $match: { "members.user": userOid } },
+
+            // 1.5️⃣ Lookup all members for populating & search
+            {
+                $lookup: {
+                    from: "users",
+                    localField: "members.user",
+                    foreignField: "_id",
+                    as: "memberUsers",
+                },
+            },
 
             // 2️⃣ Extract the current user's membership info
             {
@@ -65,7 +78,7 @@ export const getAllConversations = catchAsync(
                             $filter: {
                                 input: "$members",
                                 as: "m",
-                                cond: { $eq: ["$$m.user", userId] },
+                                cond: { $eq: ["$$m.user", userOid] },
                             },
                         },
                     },
@@ -124,7 +137,7 @@ export const getAllConversations = catchAsync(
                                 $expr: {
                                     $and: [
                                         { $eq: ["$chat", "$$chatId"] },
-                                        { $ne: ["$sender", userId] },
+                                        { $ne: ["$sender", userOid] },
                                         {
                                             $gt: [
                                                 "$createdAt",
@@ -156,15 +169,7 @@ export const getAllConversations = catchAsync(
                 },
             },
 
-            // 6️⃣ Populate members with user data
-            {
-                $lookup: {
-                    from: "users",
-                    localField: "members.user",
-                    foreignField: "_id",
-                    as: "memberUsers",
-                },
-            },
+            // 6️⃣ Map members with already-looked-up memberUsers
             {
                 $addFields: {
                     members: {
@@ -207,7 +212,7 @@ export const getAllConversations = catchAsync(
                 },
             },
 
-            // 8️⃣ Sort by activity
+            // 7️⃣ Sort by activity
             {
                 $sort: {
                     sortTimestamp: -1,
@@ -219,12 +224,74 @@ export const getAllConversations = catchAsync(
             { $limit: limit },
         ];
 
+        // Inject search stage after memberUsers lookup (index 1) if search is provided
+        if (search) {
+            const searchRegex = new RegExp(search, "i");
+            pipeline.splice(2, 0, {
+                $match: {
+                    $or: [
+                        {
+                            type: "group",
+                            name: { $regex: searchRegex },
+                        },
+                        {
+                            type: "direct",
+                            memberUsers: {
+                                $elemMatch: {
+                                    _id: { $ne: userOid },
+                                    fullName: { $regex: searchRegex },
+                                },
+                            },
+                        },
+                    ],
+                },
+            });
+        }
+
         const conversations = await ChatModel.aggregate(pipeline);
 
         // ✅ Count total
-        const total = await ChatModel.countDocuments({
-            "members.user": userId,
-        });
+        let total: number;
+        if (search) {
+            const searchRegex = new RegExp(search, "i");
+            const countPipeline: PipelineStage[] = [
+                { $match: { "members.user": userOid } },
+                {
+                    $lookup: {
+                        from: "users",
+                        localField: "members.user",
+                        foreignField: "_id",
+                        as: "memberUsers",
+                    },
+                },
+                {
+                    $match: {
+                        $or: [
+                            {
+                                type: "group",
+                                name: { $regex: searchRegex },
+                            },
+                            {
+                                type: "direct",
+                                memberUsers: {
+                                    $elemMatch: {
+                                        _id: { $ne: userOid },
+                                        fullName: { $regex: searchRegex },
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                },
+                { $count: "total" },
+            ];
+            const countResult = await ChatModel.aggregate(countPipeline);
+            total = countResult[0]?.total ?? 0;
+        } else {
+            total = await ChatModel.countDocuments({
+                "members.user": userOid,
+            });
+        }
         const totalPages = Math.ceil(total / limit);
 
         return sendResponse(res, 200, "Conversations retrieved successfully", {

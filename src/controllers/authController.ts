@@ -16,6 +16,7 @@ import {
     WELCOME_EMAIL_HTML,
 } from "../constants/constants";
 import ChatModel from "../model/chatModel";
+import { createDirectChatIfNotExists } from "./chatController";
 import moment from "moment";
 // import sendEmail from '../utils/email_sms'; // Uncomment and implement as needed
 
@@ -142,6 +143,14 @@ export const signup = catchAsync(
             isDeletable: false,
         });
 
+        // Create direct chats with all admins
+        const admins = await UserModel.find({ role: "admin", active: true });
+        await Promise.all(
+            admins.map((admin) =>
+                createDirectChatIfNotExists(newUser._id, admin._id, newUser._id),
+            ),
+        );
+
         // Send welcome email
         try {
             await sendEmail({
@@ -244,6 +253,14 @@ export const googleAuth = catchAsync(
                 members: [{ user: user._id, role: "member" }],
                 isDeletable: false,
             });
+
+            // Create direct chats with all admins
+            const admins = await UserModel.find({ role: "admin", active: true });
+            await Promise.all(
+                admins.map((admin) =>
+                    createDirectChatIfNotExists(user._id, admin._id, user._id),
+                ),
+            );
         }
 
         delete user.password;

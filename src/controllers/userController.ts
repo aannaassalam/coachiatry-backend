@@ -664,6 +664,38 @@ export const createUserByHierarchy = catchAsync(
             );
         }
 
+        if (role === "admin") {
+            // New admin → create direct chats with all existing users
+            const allUsers = await UserModel.find({
+                active: true,
+                _id: { $ne: created._id },
+            });
+            await Promise.all(
+                allUsers.map((user) =>
+                    createDirectChatIfNotExists(
+                        created._id,
+                        user._id,
+                        requesterId,
+                    ),
+                ),
+            );
+        } else {
+            // Non-admin → create direct chats with all admins
+            const admins = await UserModel.find({
+                role: "admin",
+                active: true,
+            });
+            await Promise.all(
+                admins.map((admin) =>
+                    createDirectChatIfNotExists(
+                        created._id,
+                        admin._id,
+                        requesterId,
+                    ),
+                ),
+            );
+        }
+
         sendResponse(res, 201, "User created successfully", created);
     },
 );
@@ -789,6 +821,7 @@ export const updateUserByHierarchy = catchAsync(
         /**
          * ✅ Role change rules
          */
+        const previousRole = targetUser.role;
         if (role && role !== targetUser.role) {
             if (requesterRole !== "admin") {
                 throw new AppError("Only admin can change user roles", 403);
@@ -935,6 +968,41 @@ export const updateUserByHierarchy = catchAsync(
                     ),
                 ),
             );
+        }
+
+        // On role change, ensure admin chatrooms exist
+        if (role && role !== previousRole) {
+            if (role === "admin") {
+                // Became admin → create chats with all users (including other admins)
+                const allUsers = await UserModel.find({
+                    active: true,
+                    _id: { $ne: targetUser._id },
+                });
+                await Promise.all(
+                    allUsers.map((user) =>
+                        createDirectChatIfNotExists(
+                            targetUser._id,
+                            user._id,
+                            requesterId,
+                        ),
+                    ),
+                );
+            } else {
+                // Role changed to non-admin → ensure chats with all admins
+                const admins = await UserModel.find({
+                    role: "admin",
+                    active: true,
+                });
+                await Promise.all(
+                    admins.map((admin) =>
+                        createDirectChatIfNotExists(
+                            targetUser._id,
+                            admin._id,
+                            requesterId,
+                        ),
+                    ),
+                );
+            }
         }
 
         sendResponse(res, 200, "User updated successfully", updated);
