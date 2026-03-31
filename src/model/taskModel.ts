@@ -70,6 +70,9 @@ const taskSchema = new Schema<ITaskDocument>(
 );
 
 taskSchema.index({ title: 1 });
+taskSchema.index({ user: 1, createdAt: -1 });
+taskSchema.index({ assignedTo: 1 });
+taskSchema.index({ status: 1 });
 
 const TaskModel = mongoose.model<ITaskDocument>("Task", taskSchema);
 export default TaskModel;

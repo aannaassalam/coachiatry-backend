@@ -144,7 +144,7 @@ export const signup = catchAsync(
         });
 
         // Create direct chats with all admins
-        const admins = await UserModel.find({ role: "admin", active: true });
+        const admins = await UserModel.find({ role: "admin", active: true }).select("_id");
         await Promise.all(
             admins.map((admin) =>
                 createDirectChatIfNotExists(newUser._id, admin._id, newUser._id),
@@ -255,7 +255,7 @@ export const googleAuth = catchAsync(
             });
 
             // Create direct chats with all admins
-            const admins = await UserModel.find({ role: "admin", active: true });
+            const admins = await UserModel.find({ role: "admin", active: true }).select("_id");
             await Promise.all(
                 admins.map((admin) =>
                     createDirectChatIfNotExists(user._id, admin._id, user._id),

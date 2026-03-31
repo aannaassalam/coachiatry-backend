@@ -669,7 +669,7 @@ export const createUserByHierarchy = catchAsync(
             const allUsers = await UserModel.find({
                 active: true,
                 _id: { $ne: created._id },
-            });
+            }).select("_id");
             await Promise.all(
                 allUsers.map((user) =>
                     createDirectChatIfNotExists(
@@ -684,7 +684,7 @@ export const createUserByHierarchy = catchAsync(
             const admins = await UserModel.find({
                 role: "admin",
                 active: true,
-            });
+            }).select("_id");
             await Promise.all(
                 admins.map((admin) =>
                     createDirectChatIfNotExists(
@@ -977,7 +977,7 @@ export const updateUserByHierarchy = catchAsync(
                 const allUsers = await UserModel.find({
                     active: true,
                     _id: { $ne: targetUser._id },
-                });
+                }).select("_id");
                 await Promise.all(
                     allUsers.map((user) =>
                         createDirectChatIfNotExists(
@@ -992,7 +992,7 @@ export const updateUserByHierarchy = catchAsync(
                 const admins = await UserModel.find({
                     role: "admin",
                     active: true,
-                });
+                }).select("_id");
                 await Promise.all(
                     admins.map((admin) =>
                         createDirectChatIfNotExists(

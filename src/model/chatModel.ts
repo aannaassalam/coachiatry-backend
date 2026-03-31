@@ -70,6 +70,7 @@ const chatSchema = new Schema<IChatDocument>(
 
 chatSchema.index({ type: 1 });
 chatSchema.index({ "members.user": 1 });
+chatSchema.index({ "members.user": 1, type: 1 });
 
 const ChatModel = mongoose.model<IChatDocument>("Chat", chatSchema);
 export default ChatModel;

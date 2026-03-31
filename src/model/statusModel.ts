@@ -37,6 +37,7 @@ const statusSchema = new Schema<IStatus>(
 );
 
 statusSchema.index({ title: 1 });
+statusSchema.index({ user: 1 });
 
 const StatusModel = mongoose.model<IStatus>("Status", statusSchema);
 export default StatusModel;

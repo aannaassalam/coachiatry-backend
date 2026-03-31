@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(find /Users/aannaassalam/Documents/Github/coachiatry-backend/src -type f \\\\\\(-name *.ts -o -name *.js \\\\\\))",
+      "Bash(grep -n \"index\\\\|unique\\\\|sparse\" /Users/aannaassalam/Documents/Github/coachiatry-backend/src/model/*.ts)"
     ]
   }
 }

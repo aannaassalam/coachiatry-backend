@@ -20,6 +20,7 @@ const s3 = new S3Client({
 });
 const publicBucketName = process.env.AWS_BUCKET_NAME || "";
 
+
 export async function createDirectChatIfNotExists(
     userA: mongoose.Types.ObjectId,
     userB: mongoose.Types.ObjectId,
@@ -56,178 +57,33 @@ export const getAllConversations = catchAsync(
         const rawSearch = (req.query.search as string) || "";
         const search = rawSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-        const pipeline: PipelineStage[] = [
-            // 1️⃣ Only chats where this user is a member
+        // Shared stages: match → lookup members → optional search filter
+        const baseStages: PipelineStage[] = [
             { $match: { "members.user": userOid } },
-
-            // 1.5️⃣ Lookup all members for populating & search
             {
                 $lookup: {
                     from: "users",
                     localField: "members.user",
                     foreignField: "_id",
+                    pipeline: [
+                        {
+                            $project: {
+                                password: 0,
+                                otp: 0,
+                                otpExpires: 0,
+                                passwordResetToken: 0,
+                                passwordResetExpires: 0,
+                            },
+                        },
+                    ],
                     as: "memberUsers",
                 },
             },
-
-            // 2️⃣ Extract the current user's membership info
-            {
-                $addFields: {
-                    myData: {
-                        $first: {
-                            $filter: {
-                                input: "$members",
-                                as: "m",
-                                cond: { $eq: ["$$m.user", userOid] },
-                            },
-                        },
-                    },
-                },
-            },
-
-            // 3️⃣ Lookup last message
-            {
-                $lookup: {
-                    from: "messages",
-                    let: { chatId: "$_id" },
-                    pipeline: [
-                        {
-                            $match: {
-                                $expr: { $eq: ["$chat", "$$chatId"] },
-                                scheduledAt: null,
-                            },
-                        },
-                        { $sort: { createdAt: -1 } },
-                        { $limit: 1 },
-                    ],
-                    as: "lastMessage",
-                },
-            },
-            {
-                $unwind: {
-                    path: "$lastMessage",
-                    preserveNullAndEmptyArrays: true,
-                },
-            },
-
-            // 4️⃣ Populate sender info
-            {
-                $lookup: {
-                    from: "users",
-                    localField: "lastMessage.sender",
-                    foreignField: "_id",
-                    as: "lastMessage.sender",
-                },
-            },
-            {
-                $unwind: {
-                    path: "$lastMessage.sender",
-                    preserveNullAndEmptyArrays: true,
-                },
-            },
-
-            // 5️⃣ Compute unread count
-            {
-                $lookup: {
-                    from: "messages",
-                    let: { chatId: "$_id", lastSeen: "$myData.lastReadAt" },
-                    pipeline: [
-                        {
-                            $match: {
-                                $expr: {
-                                    $and: [
-                                        { $eq: ["$chat", "$$chatId"] },
-                                        { $ne: ["$sender", userOid] },
-                                        {
-                                            $gt: [
-                                                "$createdAt",
-                                                {
-                                                    $ifNull: [
-                                                        "$$lastSeen",
-                                                        new Date(0),
-                                                    ],
-                                                },
-                                            ],
-                                        },
-                                    ],
-                                },
-                            },
-                        },
-                        { $count: "unreadCount" },
-                    ],
-                    as: "unread",
-                },
-            },
-            {
-                $addFields: {
-                    unreadCount: {
-                        $ifNull: [
-                            { $arrayElemAt: ["$unread.unreadCount", 0] },
-                            0,
-                        ],
-                    },
-                },
-            },
-
-            // 6️⃣ Map members with already-looked-up memberUsers
-            {
-                $addFields: {
-                    members: {
-                        $map: {
-                            input: "$members",
-                            as: "m",
-                            in: {
-                                role: "$$m.role",
-                                joinedAt: "$$m.joinedAt",
-                                lastReadAt: "$$m.lastReadAt",
-                                user: {
-                                    $arrayElemAt: [
-                                        {
-                                            $filter: {
-                                                input: "$memberUsers",
-                                                as: "u",
-                                                cond: {
-                                                    $eq: [
-                                                        "$$u._id",
-                                                        "$$m.user",
-                                                    ],
-                                                },
-                                            },
-                                        },
-                                        0,
-                                    ],
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-            { $project: { memberUsers: 0, unread: 0, myData: 0 } },
-
-            {
-                $addFields: {
-                    sortTimestamp: {
-                        $ifNull: ["$lastMessage.createdAt", "$createdAt"],
-                    },
-                },
-            },
-
-            // 7️⃣ Sort by activity
-            {
-                $sort: {
-                    sortTimestamp: -1,
-                },
-            },
-
-            // 8️⃣ Pagination
-            { $skip: skip },
-            { $limit: limit },
         ];
 
-        // Inject search stage after memberUsers lookup (index 1) if search is provided
         if (search) {
             const searchRegex = new RegExp(search, "i");
-            pipeline.splice(2, 0, {
+            baseStages.push({
                 $match: {
                     $or: [
                         {
@@ -248,50 +104,208 @@ export const getAllConversations = catchAsync(
             });
         }
 
-        const conversations = await ChatModel.aggregate(pipeline);
+        // Single aggregation with $facet for data + count
+        const result = await ChatModel.aggregate([
+            ...baseStages,
 
-        // ✅ Count total
-        let total: number;
-        if (search) {
-            const searchRegex = new RegExp(search, "i");
-            const countPipeline: PipelineStage[] = [
-                { $match: { "members.user": userOid } },
-                {
-                    $lookup: {
-                        from: "users",
-                        localField: "members.user",
-                        foreignField: "_id",
-                        as: "memberUsers",
-                    },
-                },
-                {
-                    $match: {
-                        $or: [
-                            {
-                                type: "group",
-                                name: { $regex: searchRegex },
-                            },
-                            {
-                                type: "direct",
-                                memberUsers: {
-                                    $elemMatch: {
-                                        _id: { $ne: userOid },
-                                        fullName: { $regex: searchRegex },
+            {
+                $facet: {
+                    data: [
+                        // Extract current user's membership info
+                        {
+                            $addFields: {
+                                myData: {
+                                    $first: {
+                                        $filter: {
+                                            input: "$members",
+                                            as: "m",
+                                            cond: {
+                                                $eq: ["$$m.user", userOid],
+                                            },
+                                        },
                                     },
                                 },
                             },
-                        ],
-                    },
+                        },
+
+                        // Lookup last message
+                        {
+                            $lookup: {
+                                from: "messages",
+                                let: { chatId: "$_id" },
+                                pipeline: [
+                                    {
+                                        $match: {
+                                            $expr: {
+                                                $eq: ["$chat", "$$chatId"],
+                                            },
+                                            scheduledAt: null,
+                                        },
+                                    },
+                                    { $sort: { createdAt: -1 } },
+                                    { $limit: 1 },
+                                ],
+                                as: "lastMessage",
+                            },
+                        },
+                        {
+                            $unwind: {
+                                path: "$lastMessage",
+                                preserveNullAndEmptyArrays: true,
+                            },
+                        },
+
+                        // Populate sender info (without sensitive fields)
+                        {
+                            $lookup: {
+                                from: "users",
+                                localField: "lastMessage.sender",
+                                foreignField: "_id",
+                                pipeline: [
+                                    {
+                                        $project: {
+                                            password: 0,
+                                            otp: 0,
+                                            otpExpires: 0,
+                                            passwordResetToken: 0,
+                                            passwordResetExpires: 0,
+                                        },
+                                    },
+                                ],
+                                as: "lastMessage.sender",
+                            },
+                        },
+                        {
+                            $unwind: {
+                                path: "$lastMessage.sender",
+                                preserveNullAndEmptyArrays: true,
+                            },
+                        },
+
+                        // Compute unread count
+                        {
+                            $lookup: {
+                                from: "messages",
+                                let: {
+                                    chatId: "$_id",
+                                    lastSeen: "$myData.lastReadAt",
+                                },
+                                pipeline: [
+                                    {
+                                        $match: {
+                                            $expr: {
+                                                $and: [
+                                                    {
+                                                        $eq: [
+                                                            "$chat",
+                                                            "$$chatId",
+                                                        ],
+                                                    },
+                                                    {
+                                                        $ne: [
+                                                            "$sender",
+                                                            userOid,
+                                                        ],
+                                                    },
+                                                    {
+                                                        $gt: [
+                                                            "$createdAt",
+                                                            {
+                                                                $ifNull: [
+                                                                    "$$lastSeen",
+                                                                    new Date(0),
+                                                                ],
+                                                            },
+                                                        ],
+                                                    },
+                                                ],
+                                            },
+                                        },
+                                    },
+                                    { $count: "unreadCount" },
+                                ],
+                                as: "unread",
+                            },
+                        },
+                        {
+                            $addFields: {
+                                unreadCount: {
+                                    $ifNull: [
+                                        {
+                                            $arrayElemAt: [
+                                                "$unread.unreadCount",
+                                                0,
+                                            ],
+                                        },
+                                        0,
+                                    ],
+                                },
+                            },
+                        },
+
+                        // Map members with looked-up user data
+                        {
+                            $addFields: {
+                                members: {
+                                    $map: {
+                                        input: "$members",
+                                        as: "m",
+                                        in: {
+                                            role: "$$m.role",
+                                            joinedAt: "$$m.joinedAt",
+                                            lastReadAt: "$$m.lastReadAt",
+                                            user: {
+                                                $arrayElemAt: [
+                                                    {
+                                                        $filter: {
+                                                            input: "$memberUsers",
+                                                            as: "u",
+                                                            cond: {
+                                                                $eq: [
+                                                                    "$$u._id",
+                                                                    "$$m.user",
+                                                                ],
+                                                            },
+                                                        },
+                                                    },
+                                                    0,
+                                                ],
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        {
+                            $project: {
+                                memberUsers: 0,
+                                unread: 0,
+                                myData: 0,
+                            },
+                        },
+
+                        {
+                            $addFields: {
+                                sortTimestamp: {
+                                    $ifNull: [
+                                        "$lastMessage.createdAt",
+                                        "$createdAt",
+                                    ],
+                                },
+                            },
+                        },
+                        { $sort: { sortTimestamp: -1 } },
+                        { $skip: skip },
+                        { $limit: limit },
+                    ],
+
+                    totalCount: [{ $count: "count" }],
                 },
-                { $count: "total" },
-            ];
-            const countResult = await ChatModel.aggregate(countPipeline);
-            total = countResult[0]?.total ?? 0;
-        } else {
-            total = await ChatModel.countDocuments({
-                "members.user": userOid,
-            });
-        }
+            },
+        ]);
+
+        const conversations = result[0]?.data ?? [];
+        const total = result[0]?.totalCount[0]?.count ?? 0;
         const totalPages = Math.ceil(total / limit);
 
         return sendResponse(res, 200, "Conversations retrieved successfully", {
@@ -328,6 +342,17 @@ export const getConversation = catchAsync(
                     from: "users",
                     localField: "members.user",
                     foreignField: "_id",
+                    pipeline: [
+                        {
+                            $project: {
+                                password: 0,
+                                otp: 0,
+                                otpExpires: 0,
+                                passwordResetToken: 0,
+                                passwordResetExpires: 0,
+                            },
+                        },
+                    ],
                     as: "memberUsers",
                 },
             },
@@ -382,200 +407,221 @@ export const getAllConversationsByCoach = catchAsync(
         const userId = req.params.userId;
         if (!userId) return next(new AppError("Unauthorized", 401));
 
+        const userOid = Types.ObjectId.createFromHexString(userId);
         const page = parseInt((req.query.page as string) || "1", 10);
         const limit = parseInt((req.query.limit as string) || "20", 10);
         const skip = (page - 1) * limit;
 
-        const pipeline: PipelineStage[] = [
-            // 1️⃣ Only chats where this user is a member
-            {
-                $match: {
-                    "members.user": Types.ObjectId.createFromHexString(userId),
-                },
+        const sensitiveProjection = {
+            $project: {
+                password: 0,
+                otp: 0,
+                otpExpires: 0,
+                passwordResetToken: 0,
+                passwordResetExpires: 0,
             },
+        };
 
-            // 2️⃣ Extract the current user's membership info
-            {
-                $addFields: {
-                    myData: {
-                        $first: {
-                            $filter: {
-                                input: "$members",
-                                as: "m",
-                                cond: {
-                                    $eq: [
-                                        "$$m.user",
-                                        Types.ObjectId.createFromHexString(
-                                            userId,
-                                        ),
-                                    ],
-                                },
-                            },
-                        },
-                    },
-                },
-            },
+        const result = await ChatModel.aggregate([
+            { $match: { "members.user": userOid } },
 
-            // 3️⃣ Lookup last message
             {
-                $lookup: {
-                    from: "messages",
-                    let: { chatId: "$_id" },
-                    pipeline: [
+                $facet: {
+                    data: [
+                        // Extract current user's membership info
                         {
-                            $match: {
-                                $expr: { $eq: ["$chat", "$$chatId"] },
-                                scheduledAt: null,
-                            },
-                        },
-                        { $sort: { createdAt: -1 } },
-                        { $limit: 1 },
-                    ],
-                    as: "lastMessage",
-                },
-            },
-            {
-                $unwind: {
-                    path: "$lastMessage",
-                    preserveNullAndEmptyArrays: true,
-                },
-            },
-
-            // 4️⃣ Populate sender info
-            {
-                $lookup: {
-                    from: "users",
-                    localField: "lastMessage.sender",
-                    foreignField: "_id",
-                    as: "lastMessage.sender",
-                },
-            },
-            {
-                $unwind: {
-                    path: "$lastMessage.sender",
-                    preserveNullAndEmptyArrays: true,
-                },
-            },
-
-            // 5️⃣ Compute unread count
-            {
-                $lookup: {
-                    from: "messages",
-                    let: { chatId: "$_id", lastSeen: "$myData.lastReadAt" },
-                    pipeline: [
-                        {
-                            $match: {
-                                $expr: {
-                                    $and: [
-                                        { $eq: ["$chat", "$$chatId"] },
-                                        {
-                                            $ne: [
-                                                "$sender",
-                                                Types.ObjectId.createFromHexString(
-                                                    userId,
-                                                ),
-                                            ],
-                                        },
-                                        {
-                                            $gt: [
-                                                "$createdAt",
-                                                {
-                                                    $ifNull: [
-                                                        "$$lastSeen",
-                                                        new Date(0),
-                                                    ],
-                                                },
-                                            ],
-                                        },
-                                    ],
-                                },
-                            },
-                        },
-                        { $count: "unreadCount" },
-                    ],
-                    as: "unread",
-                },
-            },
-            {
-                $addFields: {
-                    unreadCount: {
-                        $ifNull: [
-                            { $arrayElemAt: ["$unread.unreadCount", 0] },
-                            0,
-                        ],
-                    },
-                },
-            },
-
-            // 6️⃣ Populate members with user data
-            {
-                $lookup: {
-                    from: "users",
-                    localField: "members.user",
-                    foreignField: "_id",
-                    as: "memberUsers",
-                },
-            },
-            {
-                $addFields: {
-                    members: {
-                        $map: {
-                            input: "$members",
-                            as: "m",
-                            in: {
-                                role: "$$m.role",
-                                joinedAt: "$$m.joinedAt",
-                                lastReadAt: "$$m.lastReadAt",
-                                user: {
-                                    $arrayElemAt: [
-                                        {
-                                            $filter: {
-                                                input: "$memberUsers",
-                                                as: "u",
-                                                cond: {
-                                                    $eq: [
-                                                        "$$u._id",
-                                                        "$$m.user",
-                                                    ],
-                                                },
+                            $addFields: {
+                                myData: {
+                                    $first: {
+                                        $filter: {
+                                            input: "$members",
+                                            as: "m",
+                                            cond: {
+                                                $eq: ["$$m.user", userOid],
                                             },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+
+                        // Lookup last message
+                        {
+                            $lookup: {
+                                from: "messages",
+                                let: { chatId: "$_id" },
+                                pipeline: [
+                                    {
+                                        $match: {
+                                            $expr: {
+                                                $eq: ["$chat", "$$chatId"],
+                                            },
+                                            scheduledAt: null,
+                                        },
+                                    },
+                                    { $sort: { createdAt: -1 } },
+                                    { $limit: 1 },
+                                ],
+                                as: "lastMessage",
+                            },
+                        },
+                        {
+                            $unwind: {
+                                path: "$lastMessage",
+                                preserveNullAndEmptyArrays: true,
+                            },
+                        },
+
+                        // Populate sender info
+                        {
+                            $lookup: {
+                                from: "users",
+                                localField: "lastMessage.sender",
+                                foreignField: "_id",
+                                pipeline: [sensitiveProjection],
+                                as: "lastMessage.sender",
+                            },
+                        },
+                        {
+                            $unwind: {
+                                path: "$lastMessage.sender",
+                                preserveNullAndEmptyArrays: true,
+                            },
+                        },
+
+                        // Compute unread count
+                        {
+                            $lookup: {
+                                from: "messages",
+                                let: {
+                                    chatId: "$_id",
+                                    lastSeen: "$myData.lastReadAt",
+                                },
+                                pipeline: [
+                                    {
+                                        $match: {
+                                            $expr: {
+                                                $and: [
+                                                    {
+                                                        $eq: [
+                                                            "$chat",
+                                                            "$$chatId",
+                                                        ],
+                                                    },
+                                                    {
+                                                        $ne: [
+                                                            "$sender",
+                                                            userOid,
+                                                        ],
+                                                    },
+                                                    {
+                                                        $gt: [
+                                                            "$createdAt",
+                                                            {
+                                                                $ifNull: [
+                                                                    "$$lastSeen",
+                                                                    new Date(0),
+                                                                ],
+                                                            },
+                                                        ],
+                                                    },
+                                                ],
+                                            },
+                                        },
+                                    },
+                                    { $count: "unreadCount" },
+                                ],
+                                as: "unread",
+                            },
+                        },
+                        {
+                            $addFields: {
+                                unreadCount: {
+                                    $ifNull: [
+                                        {
+                                            $arrayElemAt: [
+                                                "$unread.unreadCount",
+                                                0,
+                                            ],
                                         },
                                         0,
                                     ],
                                 },
                             },
                         },
-                    },
+
+                        // Populate members
+                        {
+                            $lookup: {
+                                from: "users",
+                                localField: "members.user",
+                                foreignField: "_id",
+                                pipeline: [sensitiveProjection],
+                                as: "memberUsers",
+                            },
+                        },
+                        {
+                            $addFields: {
+                                members: {
+                                    $map: {
+                                        input: "$members",
+                                        as: "m",
+                                        in: {
+                                            role: "$$m.role",
+                                            joinedAt: "$$m.joinedAt",
+                                            lastReadAt: "$$m.lastReadAt",
+                                            user: {
+                                                $arrayElemAt: [
+                                                    {
+                                                        $filter: {
+                                                            input: "$memberUsers",
+                                                            as: "u",
+                                                            cond: {
+                                                                $eq: [
+                                                                    "$$u._id",
+                                                                    "$$m.user",
+                                                                ],
+                                                            },
+                                                        },
+                                                    },
+                                                    0,
+                                                ],
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        {
+                            $project: {
+                                memberUsers: 0,
+                                unread: 0,
+                                myData: 0,
+                            },
+                        },
+
+                        {
+                            $addFields: {
+                                sortTimestamp: {
+                                    $ifNull: [
+                                        "$lastMessage.createdAt",
+                                        "$createdAt",
+                                    ],
+                                },
+                            },
+                        },
+                        { $sort: { sortTimestamp: -1 } },
+                        { $skip: skip },
+                        { $limit: limit },
+                    ],
+
+                    totalCount: [{ $count: "count" }],
                 },
             },
-            { $project: { memberUsers: 0, unread: 0, myData: 0 } },
+        ]);
 
-            {
-                $addFields: {
-                    sortTimestamp: {
-                        $ifNull: ["$lastMessage.createdAt", "$createdAt"],
-                    },
-                },
-            },
-
-            // 8️⃣ Sort by activity
-            {
-                $sort: {
-                    sortTimestamp: -1,
-                },
-            },
-
-            // 8️⃣ Pagination
-            { $skip: skip },
-            { $limit: limit },
-        ];
-
-        const conversations = await ChatModel.aggregate(pipeline);
-
-        // ✅ Count total
-        const total = await ChatModel.countDocuments({
-            "members.user": userId,
-        });
+        const conversations = result[0]?.data ?? [];
+        const total = result[0]?.totalCount[0]?.count ?? 0;
         const totalPages = Math.ceil(total / limit);
 
         return sendResponse(res, 200, "Conversations retrieved successfully", {

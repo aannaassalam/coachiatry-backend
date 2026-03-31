@@ -44,6 +44,7 @@ const transcriptionSchema = new Schema<ITranscriptionDocument>(
 );
 
 transcriptionSchema.index({ title: 1 });
+transcriptionSchema.index({ user: 1 });
 
 const TranscriptionModel = mongoose.model<ITranscriptionDocument>(
     "Transcription",

@@ -43,6 +43,8 @@ const documentSchema = new Schema<IDocument>(
 );
 
 documentSchema.index({ title: 1 });
+documentSchema.index({ user: 1 });
+documentSchema.index({ shareId: 1 });
 
 const DocumentModel = mongoose.model<IDocument>("Document", documentSchema);
 export default DocumentModel;

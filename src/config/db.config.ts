@@ -6,7 +6,10 @@ export default async function connectDb(): Promise<Mongoose> {
       throw new Error('MONGODB_URI is not defined in the environment variables')
    }
    try {
-      const connect = await _connect(DB_URI)
+      const connect = await _connect(DB_URI, {
+         maxPoolSize: 10,
+         minPoolSize: 5,
+      })
       console.log(
          `MongoDB Connected: ${connect.connection.host}:${connect.connection.port}/${connect.connection.name}`
       )
