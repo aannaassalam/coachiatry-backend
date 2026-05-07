@@ -9,7 +9,7 @@ const taskSchema = new Schema<ITaskDocument>(
         },
         description: {
             type: String,
-            required: [true, "Please enter task description!"],
+            default: "",
         },
         user: {
             type: mongoose.Types.ObjectId,
@@ -66,7 +66,7 @@ const taskSchema = new Schema<ITaskDocument>(
     },
     {
         timestamps: true,
-    }
+    },
 );
 
 taskSchema.index({ title: 1 });
