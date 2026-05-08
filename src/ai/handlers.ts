@@ -1,13 +1,12 @@
 import { sanitizeHtml } from "../utils/html";
 
 export function buildTasksHtml(taskList: any[]) {
-    console.log(JSON.stringify(taskList, null, 2));
     return taskList.length
         ? `<div class="ai-results"><ol>
         ${taskList
             .map(
                 (t) =>
-                    `<li><div class="ai-item"><a href="${t.url}">${sanitizeHtml(t.title)}</a></div></li>`
+                    `<li><div class="ai-item"><a href="${t.url}">${sanitizeHtml(t.title)}</a></div></li>`,
             )
             .join("")}
         </ol></div>`
@@ -20,7 +19,7 @@ export function buildDocumentsHtml(docList: any[]) {
         ${docList
             .map(
                 (d) =>
-                    `<li><div class="ai-item"><a href="${d.url}">${sanitizeHtml(d.title)}</a></div></li>`
+                    `<li><div class="ai-item"><a href="${d.url}">${sanitizeHtml(d.title)}</a></div></li>`,
             )
             .join("")}
         </ol></div>`
@@ -79,7 +78,7 @@ export function buildCategoryCatalog(categories: any[]) {
 export function coerceCategory(
     modelCat: any,
     catalog: { id: string; title: string }[],
-    fallback: { id: string; title: string }
+    fallback: { id: string; title: string },
 ) {
     if (!modelCat) return fallback;
     const id = String(modelCat.id || "");
@@ -93,7 +92,7 @@ export function coerceCategory(
 
     // Case-insensitive title match
     const byTitle = catalog.find(
-        (c) => (c.title || "").toLowerCase().trim() === title
+        (c) => (c.title || "").toLowerCase().trim() === title,
     );
     if (byTitle) return { id: byTitle.id, title: byTitle.title };
 

@@ -10,7 +10,7 @@ export function buildToolDeclarations(Type: any) {
     const createTasksDeclaration = {
         name: "create_tasks",
         description:
-            "Generate a minimum of 10 actionable tasks with optional subtasks, dueDate (ISO 8601), priority, recurrence, and category (id must exist). If dueDate is provided, the time must be aligned to 30-minute intervals only (e.g., 09:00, 09:30, 14:00, 14:30). Never generate arbitrary minute values.",
+            "Generate ~10 actionable task suggestions for the user. Use when the user clicks 'Create Tasks' or asks for new task ideas. Behavior: inspect workspaceContext.tasks for the user's existing categories, themes, and frequencies; generate NEW tasks that complement or extend those patterns (do NOT duplicate existing task titles). Skew categories toward what the user already uses. Each task needs: tempId, title, description, priority, category (id must exist in workspace categories), and dueDate. dueDate must be ISO 8601 with time aligned to HH:00 or HH:30 only (never arbitrary minutes).",
         parameters: {
             type: Type.OBJECT,
             properties: {
@@ -76,7 +76,7 @@ export function buildToolDeclarations(Type: any) {
     const createDocumentDeclaration = {
         name: "create_document",
         description:
-            "Generate a document with HTML content and a valid tag category. Content must be sanitized on server.",
+            "Generate a single document for the user. Use when the user clicks 'Create Document' or asks to draft. Behavior: if the user gives an explicit topic, write on that topic. If no topic is given, infer the dominant theme from the user's data — analyze category distribution across workspaceContext.tasks AND tag distribution across workspaceContext.documents, then pick a topic that bridges the top 1-2 themes (e.g. many sports docs + sports-leaning tasks → write a sports-and-health crossover guide). The 'content' field must be valid HTML using ONLY this tag whitelist: <p>, <div>, <b>, <strong>, <i>, <em>, <u>, <s>, <del>, <ol>, <ul>, <li>, <a>. Emoji (unicode characters) are allowed inline. NO heading tags (<h1>-<h6>), NO <br>, NO tables, NO code/pre, NO blockquote, NO images, NO any other tag. Use <p> or <div> for structure and section breaks instead of headings — make a section's first line bold (<b> or <strong>) if you need emphasis. tag.id must exist in workspace categories.",
         parameters: {
             type: Type.OBJECT,
             properties: {
@@ -95,41 +95,200 @@ export function buildToolDeclarations(Type: any) {
         },
     };
 
-    const fetchDataDeclaration = {
-        name: "fetch_data",
+    const listTasksDeclaration = {
+        name: "list_tasks",
         description:
-            "Query tasks or documents with filters including date, priority, status, tag, and limit.",
+            "List the current user's tasks. Use when the user asks to see, find, or filter their tasks/todos. Supports filters by priority, status, category, due-date window, and free-text search.",
         parameters: {
             type: Type.OBJECT,
             properties: {
-                type: {
+                priority: {
                     type: Type.STRING,
                     format: "enum",
-                    enum: ["tasks", "documents"],
+                    enum: ["low", "medium", "high"],
                 },
-                filters: {
-                    type: Type.OBJECT,
-                    properties: {
-                        date: { type: Type.STRING },
-                        priority: {
-                            type: Type.STRING,
-                            format: "enum",
-                            enum: ["low", "medium", "high"],
+                status: {
+                    type: Type.STRING,
+                    description: "Status ObjectId from workspace context",
+                },
+                category: {
+                    type: Type.STRING,
+                    description: "Category ObjectId from workspace context",
+                },
+                frequency: {
+                    type: Type.STRING,
+                    format: "enum",
+                    enum: recurrenceEnum as unknown as string[],
+                },
+                dueBefore: {
+                    type: Type.STRING,
+                    description: "ISO date — return tasks due before this",
+                },
+                dueAfter: {
+                    type: Type.STRING,
+                    description: "ISO date — return tasks due after this",
+                },
+                search: {
+                    type: Type.STRING,
+                    description: "Free-text match on task title",
+                },
+                limit: { type: Type.INTEGER },
+            },
+        },
+    };
+
+    const listDocumentsDeclaration = {
+        name: "list_documents",
+        description:
+            "List documents visible to the current user. tab='all' returns owned plus shared, 'my-docs' returns owned only, 'shared' returns shared-with-user only.",
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                tab: {
+                    type: Type.STRING,
+                    format: "enum",
+                    enum: ["all", "my-docs", "shared"],
+                },
+                tag: {
+                    type: Type.STRING,
+                    description: "Category/tag ObjectId",
+                },
+                search: {
+                    type: Type.STRING,
+                    description: "Free-text match on document title",
+                },
+                limit: { type: Type.INTEGER },
+            },
+        },
+    };
+
+    const editTaskDeclaration = {
+        name: "edit_task",
+        description:
+            "Update fields on an existing task owned by the current user. Persists immediately to the database. Only include fields you want to change.",
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                taskId: {
+                    type: Type.STRING,
+                    description: "ObjectId of the task to update",
+                },
+                title: { type: Type.STRING },
+                description: { type: Type.STRING },
+                priority: {
+                    type: Type.STRING,
+                    format: "enum",
+                    enum: ["low", "medium", "high"],
+                },
+                dueDate: {
+                    type: Type.STRING,
+                    description:
+                        "ISO 8601 datetime aligned to HH:00 or HH:30 only",
+                },
+                category: {
+                    type: Type.STRING,
+                    description: "Category ObjectId",
+                },
+                status: {
+                    type: Type.STRING,
+                    description: "Status ObjectId",
+                },
+                frequency: {
+                    type: Type.STRING,
+                    format: "enum",
+                    enum: recurrenceEnum as unknown as string[],
+                },
+                remindBefore: {
+                    type: Type.NUMBER,
+                    description: "Minutes before dueDate to remind",
+                },
+                taskDuration: { type: Type.NUMBER },
+                active: { type: Type.BOOLEAN },
+                subtasks: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            title: { type: Type.STRING },
+                            completed: { type: Type.BOOLEAN },
                         },
-                        tag: { type: Type.STRING },
-                        status: { type: Type.STRING },
-                        limit: { type: Type.INTEGER },
+                        required: ["title"],
                     },
                 },
             },
-            required: ["type"],
+            required: ["taskId"],
+        },
+    };
+
+    const editDocumentDeclaration = {
+        name: "edit_document",
+        description:
+            "Update an existing document owned by the current user. Persists immediately. Only include fields you want to change.",
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                documentId: {
+                    type: Type.STRING,
+                    description: "ObjectId of the document to update",
+                },
+                title: { type: Type.STRING },
+                content: {
+                    type: Type.STRING,
+                    description:
+                        "HTML content (will be sanitized server-side). Use ONLY this tag whitelist: <p>, <div>, <b>, <strong>, <i>, <em>, <u>, <s>, <del>, <ol>, <ul>, <li>, <a>. Emoji (unicode) allowed inline. NO heading tags, NO <br>, NO tables/code/pre/blockquote/images. Use <p> or <div> for structure; bold the first line of a section instead of using a heading.",
+                },
+                tag: {
+                    type: Type.STRING,
+                    description: "Category ObjectId",
+                },
+                active: { type: Type.BOOLEAN },
+            },
+            required: ["documentId"],
+        },
+    };
+
+    const summarizeScreenDeclaration = {
+        name: "summarize_screen",
+        description:
+            "Summarize what is on the user's current screen. Behavior by page: 'dashboard' summarizes both tasks and documents; 'tasks' summarizes tasks; 'documents' summarizes documents. The handler fetches the relevant data and produces an HTML summary.",
+        parameters: {
+            type: Type.OBJECT,
+            properties: {
+                page: {
+                    type: Type.STRING,
+                    format: "enum",
+                    enum: [
+                        "dashboard",
+                        "tasks",
+                        "documents",
+                        "chat",
+                        "general",
+                    ],
+                    description: "Current page the user is viewing",
+                },
+                focus: {
+                    type: Type.STRING,
+                    description:
+                        "Optional emphasis for the summary, e.g. 'overdue', 'high priority', 'this week'",
+                },
+                timeRange: {
+                    type: Type.STRING,
+                    format: "enum",
+                    enum: ["today", "this_week", "this_month", "all"],
+                },
+            },
+            required: ["page"],
         },
     };
 
     return [
         createTasksDeclaration,
         createDocumentDeclaration,
-        fetchDataDeclaration,
+        listTasksDeclaration,
+        listDocumentsDeclaration,
+        editTaskDeclaration,
+        editDocumentDeclaration,
+        summarizeScreenDeclaration,
     ];
 }
 

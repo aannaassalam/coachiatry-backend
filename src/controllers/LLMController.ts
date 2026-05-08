@@ -8,7 +8,11 @@ import {
     createTranscriptsTasksDeclaration,
 } from "../ai/tools";
 import { intentPrompt } from "../ai/intent";
-import { sanitizeHtml, toHtmlParagraph } from "../utils/html";
+import {
+    sanitizeHtml,
+    sanitizeDocumentHtml,
+    toHtmlParagraph,
+} from "../utils/html";
 import {
     buildTasksHtml,
     buildDocumentsHtml,
@@ -20,9 +24,121 @@ import {
 } from "../ai/handlers";
 import TranscriptionModel from "../model/transcriptionModel";
 import CategoryModel from "../model/categoryModel";
+import TaskModel from "../model/taskModel";
+import DocumentModel from "../model/documentModel";
+import { taskQueue } from "../utils/queues/taskQueue";
+import moment from "moment";
 import { buildNativeTasksJson } from "../ai/native/buildNativeTasksJson";
 import { buildNativeDocumentsJson } from "../ai/native/buildNativeDocumentsJson";
 import { buildJsonText } from "../ai/native/jsonHelpers";
+
+const filterTasksFromContext = (
+    tasks: any[],
+    filters: {
+        priority?: string;
+        status?: string;
+        category?: string;
+        frequency?: string;
+        dueBefore?: string;
+        dueAfter?: string;
+        search?: string;
+        limit?: number;
+    },
+) => {
+    let out = tasks.slice();
+    if (filters.priority)
+        out = out.filter(
+            (t: any) =>
+                String(t.priority).toLowerCase() ===
+                String(filters.priority).toLowerCase(),
+        );
+    if (filters.status)
+        out = out.filter(
+            (t: any) =>
+                String(t.status).toLowerCase() ===
+                String(filters.status).toLowerCase(),
+        );
+    if (filters.category)
+        out = out.filter(
+            (t: any) =>
+                String(t.category).toLowerCase() ===
+                    String(filters.category).toLowerCase() ||
+                String(t.categoryId) === String(filters.category),
+        );
+    if (filters.frequency)
+        out = out.filter(
+            (t: any) =>
+                String(t.frequency).toLowerCase() ===
+                String(filters.frequency).toLowerCase(),
+        );
+    if (filters.dueBefore) {
+        const cutoff = new Date(filters.dueBefore).getTime();
+        out = out.filter(
+            (t: any) => t.dueDate && new Date(t.dueDate).getTime() < cutoff,
+        );
+    }
+    if (filters.dueAfter) {
+        const cutoff = new Date(filters.dueAfter).getTime();
+        out = out.filter(
+            (t: any) => t.dueDate && new Date(t.dueDate).getTime() > cutoff,
+        );
+    }
+    if (filters.search) {
+        const needle = filters.search.toLowerCase();
+        out = out.filter((t: any) =>
+            String(t.title || "")
+                .toLowerCase()
+                .includes(needle),
+        );
+    }
+    if (filters.limit) out = out.slice(0, filters.limit);
+    return out;
+};
+
+const filterDocumentsFromContext = (
+    docs: any[],
+    filters: {
+        tab?: string;
+        tag?: string;
+        search?: string;
+        limit?: number;
+    },
+    userId: string,
+) => {
+    let out = docs.slice();
+    if (filters.tab === "my-docs")
+        out = out.filter((d: any) => String(d.user) === String(userId));
+    else if (filters.tab === "shared")
+        out = out.filter((d: any) => String(d.user) !== String(userId));
+    if (filters.tag)
+        out = out.filter(
+            (d: any) =>
+                String(d.tag).toLowerCase() ===
+                    String(filters.tag).toLowerCase() ||
+                String(d.tagId) === String(filters.tag),
+        );
+    if (filters.search) {
+        const needle = filters.search.toLowerCase();
+        out = out.filter((d: any) =>
+            String(d.title || "")
+                .toLowerCase()
+                .includes(needle),
+        );
+    }
+    if (filters.limit) out = out.slice(0, filters.limit);
+    return out;
+};
+
+const timeRangeCutoff = (range?: string): Date | null => {
+    if (!range || range === "all") return null;
+    const now = new Date();
+    const d = new Date(now);
+    if (range === "today") d.setHours(0, 0, 0, 0);
+    else if (range === "this_week") d.setDate(now.getDate() - 7);
+    else if (range === "this_month") d.setDate(now.getDate() - 30);
+    else return null;
+    return d;
+};
 
 // Small util: tmp id generator without external deps
 const makeTmpId = () =>
@@ -52,8 +168,15 @@ Line breaks and formatting:
 
 Workspace and ID usage:
 - You have access to workspace context (tasks, documents, categories, optionally a focused document or chat).
-- Only use the provided IDs; never invent IDs.
-- When listing tasks or documents, include clickable <a> tags pointing to the provided URLs.
+- Only use the provided IDs internally for tool calls and link hrefs; NEVER print raw IDs as visible text in the HTML output.
+- When listing tasks or documents, wrap the title in a clickable <a> tag whose href is the provided URL. Show only the human-readable title as the visible text — do not show the underlying id, ObjectId, ref, status id, category id, tag id, sharedWith ids, or any other internal identifier.
+- Likewise never echo internal field names (like "_id", "categoryId", "tagId", "shareId", "user") to the user. Use natural language ("category", "due date", "status name").
+
+Conversational style:
+- This is a chat — be warm, natural, and helpful, not robotic. Greet the user when appropriate, acknowledge their request, and explain briefly what you did or are about to do.
+- Stay aware of prior turns in the session and reference them when relevant ("Earlier you asked about...", "Building on the doc we just drafted...").
+- Ask a clarifying question only when missing information would significantly change the result; otherwise make a reasonable choice and proceed.
+- After a tool call, add a short conversational HTML wrap around the result so the user sees a friendly response, not just bare data.
 
 Contextual behavior:
 - If the current page type is "chat" **and** a "focusedChat" object is provided, apply the following rules:
@@ -66,15 +189,30 @@ Contextual behavior:
 - If no "focusedChat" object is provided, ignore the above chat-specific restrictions and operate using the general workspace context.
 
 Tool usage expectations:
-- When asked to fetch any workspace data, call the fetch_data function.
-- When asked to create tasks or documents, call the respective function.
-- If the user requests a summary or conversational response, respond with HTML that follows the above formatting rules.
+- When the user asks to see, find, or filter their tasks, call list_tasks.
+- When the user asks to see, find, or filter their documents, call list_documents.
+- When the user asks to update, change, rename, reschedule, or modify an existing task, call edit_task with taskId and only the changed fields. This persists immediately.
+- When the user asks to update, edit, or modify an existing document, call edit_document with documentId and only the changed fields. This persists immediately.
+- When the user asks to summarize, recap, or "what's on my screen", call summarize_screen with the current page. The handler returns HTML.
+- When asked to create tasks (button click or text query), call create_tasks. Read workspaceContext.tasks first; generate ~10 NEW tasks that complement the user's existing categories, themes, and frequencies. Never duplicate existing task titles. Lean into the categories the user already uses most.
+- When asked to create a document (button click or text query without explicit topic), call create_document. Inspect workspaceContext.tasks AND workspaceContext.documents. Identify the dominant categories/tags by frequency, then pick a topic that bridges the top 1-2 themes (example: 5 sports docs + 2 health docs + many sports-leaning tasks → write "How sports drives better health" or similar crossover topic). If the user provided an explicit topic, use that instead.
+- For chat pages with focusedChat, derive content ONLY from the focused chat's messages within the provided window — do not fall back to global workspace data for chat-scoped actions.
+- If the user requests a conversational response that does not match any tool, respond with HTML that follows the above formatting rules.
 
 Response constraints:
 - If the user provides an action without a query or detailed instruction, automatically perform the requested action using available context without asking clarifying questions.
 - Questions are allowed only when missing information would significantly alter the quality or accuracy of the output.
 - Never output JSON to the user unless explicitly returning a tool function payload.
 - Always produce complete and valid HTML markup.
+
+Document content tag policy (applies ONLY to the 'content' field of create_document and edit_document — NOT to your normal chat HTML reply):
+- Allowed tags: <p>, <div>, <b>, <strong>, <i>, <em>, <u>, <s>, <del>, <ol>, <ul>, <li>, <a>.
+- Emoji (unicode characters like 🎯 ✅ 📝) are allowed inline.
+- Forbidden: <h1>–<h6>, <br>, <hr>, <table>, <thead>, <tbody>, <tr>, <td>, <th>, <code>, <pre>, <blockquote>, <img>, <span>, and every other tag not in the allowed list.
+- Use <p> or <div> for structure and section breaks. Where you would normally use a heading, instead start the section with a bold line: <p><b>Section title</b></p>.
+- For lists, use <ol> for ordered/numbered lists and <ul> for unordered/bulleted lists. <li> only as a child of <ol> or <ul>.
+- The server sanitizer will strip any forbidden tags — so the more you stay inside the whitelist, the more of your formatting will survive.
+- These document-content rules do NOT apply to normal chat HTML replies — chat replies still follow the list/line-break rules above (<ol> only, no <ul>, <br/> for line breaks).
 `.trim();
 
 // Translate relative chat window phrases into a Date lower bound for chat pages
@@ -169,20 +307,113 @@ export const aiController = catchAsync(
 
         const systemPrompt = `${SYSTEM_STYLE_GUIDE}\n\nAvailable categories: ${JSON.stringify(workspaceContext.categories)}`;
 
+        const actionDirective = (() => {
+            switch (chosenAction) {
+                case "create_tasks":
+                    if (page === "chat" && workspaceContext.focusChat) {
+                        return `
+ACTION DIRECTIVE — create_tasks (CHAT-SCOPED, STRICT):
+You MUST call the create_tasks tool now. Do NOT respond with HTML.
+
+You are extracting actionable tasks ONLY from the focused chat messages in workspaceContext.focusChat.messages within the provided chat window (lower bound: ${chatDateFrom ? chatDateFrom.toISOString() : "(all time)"}).
+
+STRICT GROUNDING RULES — these override any general directive:
+- Source ONLY from focusedChat.messages text. Do NOT consult workspaceContext.tasks, workspaceContext.documents, or any general knowledge to fabricate tasks.
+- Each task must be directly traceable to one or more specific chat messages — if you cannot point to a quote that justifies it, do NOT create it.
+- Do NOT pad to a target count. Output the exact number of genuinely actionable items found, even if that is 1 or 0.
+- If the focused chat contains zero actionable items, call create_tasks with tasks: [] (empty array).
+- Do NOT infer, embellish, generalize, or summarize beyond what was explicitly said.
+- Title and description must paraphrase the chat content faithfully without adding new facts.
+- category.id must be one of workspaceContext.categories ids (used for tagging only — the task substance comes from chat).
+- dueDate must be ISO 8601 with HH:00 or HH:30. If the chat did not specify a due time, pick a reasonable near-future slot.
+`.trim();
+                    }
+                    return `
+ACTION DIRECTIVE — create_tasks:
+You MUST call the create_tasks tool now. Do NOT respond with HTML.
+Generate EXACTLY 10 NEW task suggestions for the user.
+Read workspaceContext.tasks below and infer the user's dominant categories, themes, frequencies, and patterns.
+Each suggestion must:
+- Complement or extend the user's existing patterns (no duplicates of existing titles).
+- Use a category.id that exists in workspaceContext.categories.
+- Have a realistic future dueDate aligned to HH:00 or HH:30.
+- Be specific and actionable (not generic advice).
+If the user's existing tasks lean toward a topic (e.g. fitness, work, study), most suggestions should reinforce that topic; mix in 1-2 complementary ones.
+If the user has zero existing tasks, generate 10 well-rounded productivity tasks across the available categories.
+`.trim();
+                case "create_document":
+                    return `
+ACTION DIRECTIVE — create_document:
+You MUST call the create_document tool now. Do NOT respond with HTML.
+Generate EXACTLY ONE document tailored to this specific user.
+
+Step 1 — Topic selection:
+- If the user provided an explicit topic in the query, use that topic.
+- Otherwise, you MUST infer a topic from the user's data. Do NOT default to a generic productivity doc unless the workspace is genuinely empty.
+  • Inspect workspaceContext.documents → count occurrences per tag/category title.
+  • Inspect workspaceContext.tasks → count occurrences per category title.
+  • Identify the top 1-2 themes by combined frequency across BOTH lists.
+  • Pick a topic that BRIDGES the top themes when they are distinct (example: 5 sports docs + 2 health docs + sports-leaning tasks → "How an active lifestyle drives long-term health"). When one theme dominates, write a deeper companion piece on that theme that does NOT duplicate any existing document title.
+  • Avoid topics already covered by an existing document title — produce something complementary, not redundant.
+
+Step 2 — Content quality:
+- Title: short, specific, descriptive.
+- Content: substantive HTML with multiple sections. Use ONLY these tags: <p>, <div>, <b>, <strong>, <i>, <em>, <u>, <s>, <del>, <ol>, <ul>, <li>, <a>. Emoji (unicode) is allowed inline. NO heading tags (no <h1>–<h6>), NO <br>, NO tables, NO code/pre, NO blockquote, NO images, NO span. For section titles, use a bold first line like <p><b>Section title</b></p>. Use <ol> for numbered lists and <ul> for bullet lists.
+- Aim for genuine usefulness — actionable steps, structured guidance, or a concrete plan — not platitudes.
+
+Step 3 — tag:
+- tag.id MUST be one of the ids in workspaceContext.categories.
+- Pick the category whose title best matches the inferred topic.
+
+If the user has zero tasks AND zero documents, generate a high-quality starter document on a productivity or planning topic and tag it with the most general category available.
+`.trim();
+                case "list_tasks":
+                    return `ACTION DIRECTIVE — list_tasks: call list_tasks with any filters implied by the query.`;
+                case "list_documents":
+                    return `ACTION DIRECTIVE — list_documents: call list_documents with any filters implied by the query.`;
+                case "edit_task":
+                    return `ACTION DIRECTIVE — edit_task: identify the target task from workspaceContext.tasks (match by title/description) and call edit_task with its taskId plus only the changed fields.`;
+                case "edit_document":
+                    return `ACTION DIRECTIVE — edit_document: identify the target document from workspaceContext.documents and call edit_document with its documentId plus only the changed fields.`;
+                case "summarize":
+                case "summarize_screen":
+                    return `ACTION DIRECTIVE — summarize: call summarize_screen with page="${page}" and any timeRange/focus implied by the query.`;
+                default:
+                    return "";
+            }
+        })();
+
         const userPrompt = `
 Action: ${chosenAction}
 Page: ${page}${id ? `\nId: ${id}` : ""}
 User query: ${query || "(no query provided)"}
 Chat window: ${chatDateFrom ? chatDateFrom.toISOString() : "(all time)"}
 
+${actionDirective}
 
 WorkspaceContext (compact):
 ${JSON.stringify(workspaceContext).slice(0, 40000)}
 `.trim();
 
-        const tools = {
+        const forceToolCall = [
+            "create_tasks",
+            "create_document",
+            "list_tasks",
+            "list_documents",
+            "edit_task",
+            "edit_document",
+            "summarize",
+            "summarize_screen",
+        ].includes(chosenAction);
+
+        const tools: any = {
             tools: [{ functionDeclarations: buildToolDeclarations(Type) }],
         };
+        if (forceToolCall) {
+            tools.toolConfig = {
+                functionCallingConfig: { mode: "ANY" },
+            };
+        }
 
         const contents: any[] = [
             { role: "user", parts: [{ text: systemPrompt }] },
@@ -228,75 +459,186 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
                 }
             }
 
-            if (fn.name === "fetch_data") {
-                const { type, filters = {} } = args;
-                if (type === "tasks") {
-                    let filtered = workspaceContext.tasks.slice();
-                    if (filters.priority)
-                        filtered = filtered.filter(
-                            (t: any) =>
-                                String(t.priority).toLowerCase() ===
-                                String(filters.priority).toLowerCase(),
-                        );
-                    if (filters.status)
-                        filtered = filtered.filter(
-                            (t: any) =>
-                                String(t.status).toLowerCase() ===
-                                String(filters.status).toLowerCase(),
-                        );
-                    if (filters.tag)
-                        filtered = filtered.filter(
-                            (t: any) =>
-                                String(t.category).toLowerCase() ===
-                                    String(filters.tag).toLowerCase() ||
-                                String(t.categoryId) === String(filters.tag),
-                        );
-                    if (filters.date) {
-                        const target = new Date(filters.date).toDateString();
-                        filtered = filtered.filter(
-                            (t: any) =>
-                                new Date(t.createdAt).toDateString() ===
-                                    target ||
-                                (t.dueDate &&
-                                    new Date(t.dueDate).toDateString() ===
-                                        target),
-                        );
-                    }
-                    if (filters.limit)
-                        filtered = filtered.slice(0, filters.limit);
-                    const html = buildTasksHtml(filtered);
+            if (fn.name === "list_tasks") {
+                const filtered = filterTasksFromContext(
+                    workspaceContext.tasks,
+                    args || {},
+                );
+                const html = buildTasksHtml(filtered);
+                sessionStore.appendTurn(sessionId, "model", html);
+                res.set("X-Session-Id", sessionId);
+                res.set("Access-Control-Expose-Headers", "X-Session-Id");
+                return res.json({ type: "text", data: html });
+            }
+
+            if (fn.name === "list_documents") {
+                const filtered = filterDocumentsFromContext(
+                    workspaceContext.documents,
+                    args || {},
+                    userId,
+                );
+                const html = buildDocumentsHtml(filtered);
+                sessionStore.appendTurn(sessionId, "model", html);
+                res.set("X-Session-Id", sessionId);
+                res.set("Access-Control-Expose-Headers", "X-Session-Id");
+                return res.json({ type: "text", data: html });
+            }
+
+            if (fn.name === "edit_task") {
+                const { taskId, ...updates } = args || {};
+                if (!taskId) {
+                    const html = toHtmlParagraph(
+                        "Could not edit the task: taskId was not provided.",
+                    );
                     sessionStore.appendTurn(sessionId, "model", html);
                     res.set("X-Session-Id", sessionId);
                     res.set("Access-Control-Expose-Headers", "X-Session-Id");
                     return res.json({ type: "text", data: html });
                 }
-                if (type === "documents") {
-                    let filtered = workspaceContext.documents.slice();
-                    if (filters.tag)
-                        filtered = filtered.filter(
-                            (d: any) =>
-                                String(d.tag).toLowerCase() ===
-                                    String(filters.tag).toLowerCase() ||
-                                String(d.tagId) === String(filters.tag),
-                        );
-                    if (filters.date) {
-                        const target = new Date(filters.date).toDateString();
-                        filtered = filtered.filter(
-                            (d: any) =>
-                                new Date(d.createdAt).toDateString() === target,
-                        );
-                    }
-                    if (filters.limit)
-                        filtered = filtered.slice(0, filters.limit);
-                    const html = buildDocumentsHtml(filtered);
+                const updated = await TaskModel.findOneAndUpdate(
+                    { _id: taskId, user: userId },
+                    updates,
+                    { new: true, runValidators: true },
+                );
+                if (!updated) {
+                    const html = toHtmlParagraph(
+                        "Task not found or you do not have permission to edit it.",
+                    );
+                    sessionStore.appendTurn(sessionId, "model", html);
+                    res.set("X-Session-Id", sessionId);
+                    res.set("Access-Control-Expose-Headers", "X-Session-Id");
+                    return res.json({ type: "text", data: html });
+                }
+                if (updated.remindBefore && updated.dueDate) {
+                    const oldJob = await taskQueue.getJob(updated._id);
+                    if (oldJob) await oldJob.remove();
+                    const delay = Math.max(
+                        0,
+                        moment(updated.dueDate).diff(moment()) -
+                            updated.remindBefore * 60 * 1000,
+                    );
+                    await taskQueue.add(
+                        "sendReminder",
+                        { taskId: updated._id },
+                        { delay },
+                    );
+                }
+                const html = toHtmlParagraph(
+                    `Updated task: <strong>${sanitizeHtml(updated.title || "")}</strong>.`,
+                );
+                sessionStore.appendTurn(sessionId, "model", html);
+                res.set("X-Session-Id", sessionId);
+                res.set("Access-Control-Expose-Headers", "X-Session-Id");
+                return res.json({ type: "text", data: html });
+            }
+
+            if (fn.name === "edit_document") {
+                const { documentId, content, ...updates } = args || {};
+                if (!documentId) {
+                    const html = toHtmlParagraph(
+                        "Could not edit the document: documentId was not provided.",
+                    );
+                    sessionStore.appendTurn(sessionId, "model", html);
+                    res.set("X-Session-Id", sessionId);
+                    res.set("Access-Control-Expose-Headers", "X-Session-Id");
+                    return res.json({ type: "text", data: html });
+                }
+                const payload: Record<string, unknown> = { ...updates };
+                if (typeof content === "string")
+                    payload.content = sanitizeDocumentHtml(content);
+                const updated = await DocumentModel.findOneAndUpdate(
+                    { _id: documentId, user: userId },
+                    payload,
+                    { new: true, runValidators: true },
+                );
+                if (!updated) {
+                    const html = toHtmlParagraph(
+                        "Document not found or you do not have permission to edit it.",
+                    );
                     sessionStore.appendTurn(sessionId, "model", html);
                     res.set("X-Session-Id", sessionId);
                     res.set("Access-Control-Expose-Headers", "X-Session-Id");
                     return res.json({ type: "text", data: html });
                 }
                 const html = toHtmlParagraph(
-                    `Unknown fetch type: ${String(type)}`,
+                    `Updated document: <strong>${sanitizeHtml(updated.title || "")}</strong>.`,
                 );
+                sessionStore.appendTurn(sessionId, "model", html);
+                res.set("X-Session-Id", sessionId);
+                res.set("Access-Control-Expose-Headers", "X-Session-Id");
+                return res.json({ type: "text", data: html });
+            }
+
+            if (fn.name === "summarize_screen") {
+                const screenPage = String(args?.page || page).toLowerCase();
+                const focus = args?.focus
+                    ? String(args.focus)
+                    : "(no specific focus)";
+                const cutoff = timeRangeCutoff(args?.timeRange);
+
+                const filterByCutoff = (items: any[], dateKeys: string[]) =>
+                    cutoff
+                        ? items.filter((it: any) =>
+                              dateKeys.some((k) =>
+                                  it[k]
+                                      ? new Date(it[k]).getTime() >=
+                                        cutoff.getTime()
+                                      : false,
+                              ),
+                          )
+                        : items;
+
+                const includeTasks =
+                    screenPage === "tasks" ||
+                    screenPage === "dashboard" ||
+                    screenPage === "general";
+                const includeDocs =
+                    screenPage === "documents" ||
+                    screenPage === "dashboard" ||
+                    screenPage === "general";
+
+                const tasksForSummary = includeTasks
+                    ? filterByCutoff(workspaceContext.tasks, [
+                          "dueDate",
+                          "createdAt",
+                      ])
+                    : [];
+                const docsForSummary = includeDocs
+                    ? filterByCutoff(workspaceContext.documents, [
+                          "updatedAt",
+                          "createdAt",
+                      ])
+                    : [];
+
+                const summaryPrompt = `
+${SYSTEM_STYLE_GUIDE}
+
+You are summarizing the user's current screen.
+Page: ${screenPage}
+Focus: ${focus}
+TimeRange: ${args?.timeRange || "all"}
+
+Produce a concise HTML summary that helps the user understand what is on their screen at a glance. Highlight counts, what is overdue or high-priority where relevant, and any patterns. Always include clickable <a> tags for individual items only when listing them. Do not invent items or IDs.
+
+Tasks (${tasksForSummary.length}): ${JSON.stringify(tasksForSummary).slice(0, 20000)}
+Documents (${docsForSummary.length}): ${JSON.stringify(docsForSummary).slice(0, 20000)}
+`.trim();
+
+                const summaryResponse = await ai.models.generateContent({
+                    model: "gemini-2.5-flash",
+                    contents: [
+                        { role: "user", parts: [{ text: summaryPrompt }] },
+                    ],
+                });
+
+                const summaryText: string =
+                    typeof (summaryResponse as any).text === "string"
+                        ? (summaryResponse as any).text
+                        : (summaryResponse as any).candidates?.[0]?.content?.parts
+                              ?.map((p: any) => p.text ?? "")
+                              .join("") || "";
+
+                const html = toSafeHtml(summaryText);
                 sessionStore.appendTurn(sessionId, "model", html);
                 res.set("X-Session-Id", sessionId);
                 res.set("Access-Control-Expose-Headers", "X-Session-Id");
@@ -343,7 +685,7 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
             if (fn.name === "create_document") {
                 const doc = {
                     title: args.title || "Untitled Document",
-                    content: sanitizeHtml(args.content || "<p></p>"),
+                    content: sanitizeDocumentHtml(args.content || "<p></p>"),
                     tag: args.tag
                         ? {
                               title: args.tag.title || "",
@@ -668,11 +1010,35 @@ This applies to ALL user intents:
 The tool call MUST produce:
 {
   "title": "...",
-  "content": "<h2> ... VALID RAW HTML ... </h2>",
+  "content": "<p><b>Section title</b></p><p>... VALID HTML using only the allowed tags ...</p>",
   "tag": { "title": "...", "id": "CATEGORY_ID" }
 }
 
-HTML MUST appear ONLY inside the tool call’s content field.
+HTML MUST appear ONLY inside the tool call's content field.
+
+### ⭐ RULE — Document content tag policy (STRICT)
+Inside the 'content' field of create_document or edit_document, use ONLY these HTML tags:
+- Containers: <p>, <div>
+- Bold: <b> or <strong>
+- Italic: <i> or <em>
+- Underline: <u>
+- Strikethrough: <s> or <del>
+- Ordered list: <ol> with <li> children
+- Unordered list: <ul> with <li> children
+- Links: <a href="...">
+- Emoji: unicode characters (🎯 ✅ 📝 etc.) allowed inline.
+
+FORBIDDEN inside document content:
+- All heading tags: <h1>, <h2>, <h3>, <h4>, <h5>, <h6>
+- <br>, <hr>, <span>
+- Tables: <table>, <thead>, <tbody>, <tr>, <td>, <th>
+- Code/quote: <code>, <pre>, <blockquote>
+- Media: <img>, <video>, <audio>
+- Any tag not listed above.
+
+Use <p> or <div> for structure. Where you would normally use a heading, use a bold first line instead: <p><b>Section title</b></p>. The server sanitizer will strip any forbidden tag — staying inside the allowlist preserves your formatting.
+
+This document-content policy does NOT apply to JSON UI text fields — those are plain strings.
 
 ### ⭐ RULE — After the tool call, you MUST output a JSON UI element:
 
@@ -719,6 +1085,48 @@ When the user requests a document **without specifying a topic**, you MUST:
 ❗ If the context is empty, generate a neutral, helpful document (e.g., “Daily Productivity Blueprint”)
 
 =========================================================
+============ CONTEXT-AWARE TASK SUGGESTION LOGIC ========
+=========================================================
+
+When the user requests task creation (button click or text query), you MUST:
+1. Read workspaceContext.tasks to see the user's existing tasks, categories, and themes
+2. Generate ~10 NEW task suggestions that complement or extend those patterns
+3. NEVER duplicate existing task titles
+4. Skew categories toward what the user already uses most
+5. Use ONLY category ids that exist in workspaceContext.categories
+
+=========================================================
+=================== TOOL ROUTING (new) ==================
+=========================================================
+
+Use this routing table to pick the right tool:
+- User wants to see/find/filter tasks → list_tasks
+- User wants to see/find/filter documents → list_documents
+- User wants to update/rename/reschedule a task → edit_task (taskId + only changed fields; persists immediately)
+- User wants to update/edit a document → edit_document (documentId + only changed fields; persists immediately)
+- User wants to summarize the screen → summarize_screen with current page
+
+=========================================================
+================ CONVERSATIONAL STYLE ===================
+=========================================================
+
+This is a chat. Be warm, natural, and helpful, not robotic.
+- Greet the user briefly when appropriate.
+- Acknowledge what they asked and explain briefly what you did or will do.
+- Reference earlier turns when relevant.
+- Ask a clarifying question only when missing information would significantly change the result.
+- Around any tool result, wrap a friendly conversational text node so the user sees a human-feeling response, not just bare data.
+
+=========================================================
+================== SENSITIVE DATA RULES =================
+=========================================================
+
+NEVER expose internal identifiers in any visible text.
+- ObjectIds, _id, taskId, documentId, categoryId, tagId, statusId, shareId, userId, sharedWith ids — these may appear ONLY inside the structured JSON properties (task.id, document.id, button.action payloads). They MUST NOT appear inside any “text” component's text field shown to the user.
+- Use human names instead: “Health” not “67abc...”, “due Friday” not the dueDate ObjectId, “completed” not the status _id.
+- Do not echo field names like “_id”, “categoryId”, “shareId”, “tagId” to the user.
+
+=========================================================
 ======================== TASK CREATION ===================
 =========================================================
 
@@ -727,16 +1135,26 @@ When user requests task creation:
 - Then output a JSON UI tree representing the list of created tasks
 - No HTML ever
 
-CHAT TASK PRIORITY (important):
-- If page = "chat", prioritize generating actionable tasks from the focused chat window.
-- For chat actions, prefer calling create_tasks instead of replying with a generic summary.
-- If no actionable items exist in the selected chat window, return a short JSON view that tells the user no tasks could be created for that window (do not return a generic summary).
-- When create_tasks is used, respond with a top-level object: { "type": "tasks", "data": { "tasks": [...] } } so the client can render selectable tasks.
-- When action is "chat":
-  * You MUST derive tasks ONLY from the focused chat messages within the provided chat window.
-  * Do NOT invent, hallucinate, or import tasks from outside the focused chat.
-  * If the focused chat has no actionable items, return a tasks payload with an empty tasks array and a brief message explaining that no tasks could be created for this chat window.
-  * You MUST call create_tasks; do not return a free-text JSON view when action is chat on a chat page.
+CHAT TASK PRIORITY (STRICT — anti-hallucination):
+When page = "chat" and a focusedChat is provided, the following rules are absolute and override any other instruction in this guide:
+
+1. Source of truth: ONLY workspaceContext.focusChat.messages within the provided chat window. Do NOT use workspaceContext.tasks, workspaceContext.documents, prior session turns, or general world knowledge to invent tasks.
+
+2. Direct grounding required: every task you emit must be traceable to a specific message (or a small set of messages) inside the chat window. If you could not produce a verbatim or near-verbatim quote from the chat to justify the task, do NOT create that task.
+
+3. No padding: output exactly the number of genuinely actionable items found in the chat window — never round up to a target count, never invent extras to fill space. The number can be 1, 2, 5, 0 — whatever the messages actually contain.
+
+4. Empty case: if the chat window contains zero actionable items, call create_tasks with tasks: [] (an empty array). Do NOT fabricate plausible-sounding tasks to avoid an empty result. The handler will render a "no tasks found" message for the user.
+
+5. Faithful paraphrasing: each task title and description must paraphrase the chat content WITHOUT adding facts, names, dates, or details that were not explicitly stated. Do not embellish, generalize, or summarize beyond the literal messages.
+
+6. Tagging only: category.id may come from workspaceContext.categories (purely for tagging). The substance — title, description, subtasks — must come from the chat itself, not the categories.
+
+7. dueDate: use a date that the chat actually mentioned (parsed to ISO 8601, HH:00 or HH:30). If the chat did not state a due time, pick a reasonable near-future slot — but do not invent a "deadline urgency" the chat didn't express.
+
+8. You MUST call create_tasks. Do NOT return a free-text JSON view in place of the tool call when on a chat page.
+
+9. Output envelope: when create_tasks is called, the response shape is { "type": "tasks", "data": { "tasks": [...] } } so the client can render selectable tasks.
 
 =========================================================
 ======================== SUMMARY MODE ====================
@@ -950,6 +1368,81 @@ Available categories: ${JSON.stringify(workspaceContext.categories)}
             parts: [{ text: t.text }],
         }));
 
+        const actionDirective = (() => {
+            switch (effectiveAction) {
+                case "create_tasks":
+                    if (page === "chat" && workspaceContext.focusChat) {
+                        return `
+ACTION DIRECTIVE — create_tasks (CHAT-SCOPED, STRICT):
+You MUST call the create_tasks tool now.
+
+You are extracting actionable tasks ONLY from the focused chat messages in workspaceContext.focusChat.messages within the provided chat window (lower bound: ${chatDateFrom ? chatDateFrom.toISOString() : "(all time)"}).
+
+STRICT GROUNDING RULES — these override any general directive:
+- Source ONLY from focusedChat.messages text. Do NOT consult workspaceContext.tasks, workspaceContext.documents, or any general knowledge to fabricate tasks.
+- Each task must be directly traceable to one or more specific chat messages — if you cannot point to a quote that justifies it, do NOT create it.
+- Do NOT pad to a target count. Output the exact number of genuinely actionable items found, even if that is 1 or 0.
+- If the focused chat contains zero actionable items, call create_tasks with tasks: [] (empty array). The downstream handler will show a "no tasks found" message.
+- Do NOT infer, embellish, generalize, or summarize beyond what was explicitly said.
+- Title and description must paraphrase the chat content faithfully without adding new facts.
+- category.id must be one of workspaceContext.categories ids (used for tagging only — the task substance comes from chat).
+- dueDate must be ISO 8601 with HH:00 or HH:30. If the chat did not specify a due time, pick a reasonable near-future slot.
+`.trim();
+                    }
+                    return `
+ACTION DIRECTIVE — create_tasks:
+You MUST call the create_tasks tool now.
+Generate EXACTLY 10 NEW task suggestions for the user.
+Read workspaceContext.tasks below and infer the user's dominant categories, themes, frequencies, and patterns.
+Each suggestion must:
+- Complement or extend the user's existing patterns (no duplicates of existing titles).
+- Use a category.id that exists in workspaceContext.categories.
+- Have a realistic future dueDate aligned to HH:00 or HH:30.
+- Be specific and actionable (not generic advice).
+If the user has zero existing tasks, generate 10 well-rounded productivity tasks across the available categories.
+`.trim();
+                case "create_document":
+                    return `
+ACTION DIRECTIVE — create_document:
+You MUST call the create_document tool now.
+Generate EXACTLY ONE document tailored to this specific user.
+
+Step 1 — Topic selection:
+- If the user provided an explicit topic in the query, use that topic.
+- Otherwise, you MUST infer a topic from the user's data. Do NOT default to a generic productivity doc unless the workspace is genuinely empty.
+  • Inspect workspaceContext.documents → count occurrences per tag/category title.
+  • Inspect workspaceContext.tasks → count occurrences per category title.
+  • Identify the top 1-2 themes by combined frequency across BOTH lists.
+  • Pick a topic that BRIDGES the top themes when they are distinct (example: 5 sports docs + 2 health docs + sports-leaning tasks → "How an active lifestyle drives long-term health"). When one theme dominates, write a deeper companion piece on that theme that does NOT duplicate any existing document title.
+  • Avoid topics already covered by an existing document title.
+
+Step 2 — Content quality:
+- Title: short, specific, descriptive.
+- Content: substantive HTML (multiple sections, headings, ordered lists where appropriate). Use <ol> only — never <ul>. Never use \\n.
+- Aim for genuine usefulness — actionable steps, structured guidance, or a concrete plan.
+
+Step 3 — tag:
+- tag.id MUST be one of the ids in workspaceContext.categories.
+- Pick the category whose title best matches the inferred topic.
+
+If the user has zero tasks AND zero documents, generate a high-quality starter document on a productivity or planning topic.
+`.trim();
+                case "list_tasks":
+                    return `ACTION DIRECTIVE — list_tasks: call list_tasks with any filters implied by the query.`;
+                case "list_documents":
+                    return `ACTION DIRECTIVE — list_documents: call list_documents with any filters implied by the query.`;
+                case "edit_task":
+                    return `ACTION DIRECTIVE — edit_task: identify the target task from workspaceContext.tasks and call edit_task with its taskId plus only the changed fields.`;
+                case "edit_document":
+                    return `ACTION DIRECTIVE — edit_document: identify the target document from workspaceContext.documents and call edit_document with its documentId plus only the changed fields.`;
+                case "summarize":
+                case "summarize_screen":
+                    return `ACTION DIRECTIVE — summarize: call summarize_screen with page="${page}" and any timeRange/focus implied by the query.`;
+                default:
+                    return "";
+            }
+        })();
+
         const userPrompt = `
 Action: ${effectiveAction}
 Page: ${page}
@@ -958,13 +1451,31 @@ Platform: native
 User query: ${query || "(none)"}
 Chat window: ${chatDateFrom ? chatDateFrom.toISOString() : "(all time)"}
 
+${actionDirective}
+
 WorkspaceContext:
 ${JSON.stringify(workspaceContext).slice(0, 40000)}
 `.trim();
 
-        const tools = {
+        const forceToolCall = [
+            "create_tasks",
+            "create_document",
+            "list_tasks",
+            "list_documents",
+            "edit_task",
+            "edit_document",
+            "summarize",
+            "summarize_screen",
+        ].includes(effectiveAction);
+
+        const tools: any = {
             tools: [{ functionDeclarations: buildToolDeclarations(Type) }],
         };
+        if (forceToolCall) {
+            tools.toolConfig = {
+                functionCallingConfig: { mode: "ANY" },
+            };
+        }
 
         const contents: any[] = [
             { role: "user", parts: [{ text: finalSystemPrompt }] },
@@ -1040,50 +1551,304 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
             }
 
             // ================================
-            // FETCH TASKS
+            // LIST TASKS
             // ================================
-            if (fn.name === "fetch_data") {
-                const { type, filters = {} } = args;
+            if (fn.name === "list_tasks") {
+                const filtered = filterTasksFromContext(
+                    workspaceContext.tasks,
+                    args || {},
+                );
+                const list = buildNativeTasksJson(filtered);
+                const payload = {
+                    type: "view",
+                    style: { gap: 8, padding: 12 },
+                    children: [
+                        {
+                            type: "text",
+                            text:
+                                filtered.length > 0
+                                    ? `Here are the tasks I found (${filtered.length}):`
+                                    : "I couldn't find any tasks matching that.",
+                            style: {
+                                fontFamily: "Lato-Regular",
+                                fontSize: 14,
+                                color: "gray",
+                            },
+                        },
+                        list,
+                    ],
+                };
+                sessionStore.appendTurn(
+                    sessionId,
+                    "model",
+                    JSON.stringify(payload),
+                );
+                return res.json({ type: "json", data: payload });
+            }
 
-                if (type === "tasks") {
-                    let filtered = workspaceContext.tasks.slice();
+            // ================================
+            // LIST DOCUMENTS
+            // ================================
+            if (fn.name === "list_documents") {
+                const filtered = filterDocumentsFromContext(
+                    workspaceContext.documents,
+                    args || {},
+                    userId,
+                );
+                const list = buildNativeDocumentsJson(filtered);
+                const payload = {
+                    type: "view",
+                    style: { gap: 8, padding: 12 },
+                    children: [
+                        {
+                            type: "text",
+                            text:
+                                filtered.length > 0
+                                    ? `Here are the documents I found (${filtered.length}):`
+                                    : "I couldn't find any documents matching that.",
+                            style: {
+                                fontFamily: "Lato-Regular",
+                                fontSize: 14,
+                                color: "gray",
+                            },
+                        },
+                        list,
+                    ],
+                };
+                sessionStore.appendTurn(
+                    sessionId,
+                    "model",
+                    JSON.stringify(payload),
+                );
+                return res.json({ type: "json", data: payload });
+            }
 
-                    if (filters.priority) {
-                        filtered = filtered.filter(
-                            (t: any) =>
-                                String(t.priority).toLowerCase() ===
-                                String(filters.priority).toLowerCase(),
-                        );
-                    }
-                    if (filters.status) {
-                        filtered = filtered.filter(
-                            (t: any) =>
-                                String(t.status).toLowerCase() ===
-                                String(filters.status).toLowerCase(),
-                        );
-                    }
-
-                    const json = buildNativeTasksJson(filtered);
-
-                    sessionStore.appendTurn(
-                        sessionId,
-                        "model",
-                        JSON.stringify(json),
+            // ================================
+            // EDIT TASK
+            // ================================
+            if (fn.name === "edit_task") {
+                const { taskId, ...updates } = args || {};
+                const buildMessage = (text: string) => ({
+                    type: "view",
+                    style: { padding: 12 },
+                    children: [
+                        {
+                            type: "text",
+                            text,
+                            style: {
+                                fontFamily: "Lato-Regular",
+                                fontSize: 15,
+                                color: "text",
+                            },
+                        },
+                    ],
+                });
+                if (!taskId) {
+                    return res.json({
+                        type: "json",
+                        data: buildMessage(
+                            "I couldn't update the task — I'm missing which task you meant.",
+                        ),
+                    });
+                }
+                const updated = await TaskModel.findOneAndUpdate(
+                    { _id: taskId, user: userId },
+                    updates,
+                    { new: true, runValidators: true },
+                );
+                if (!updated) {
+                    return res.json({
+                        type: "json",
+                        data: buildMessage(
+                            "I couldn't find that task or you don't have permission to edit it.",
+                        ),
+                    });
+                }
+                if (updated.remindBefore && updated.dueDate) {
+                    const oldJob = await taskQueue.getJob(updated._id);
+                    if (oldJob) await oldJob.remove();
+                    const delay = Math.max(
+                        0,
+                        moment(updated.dueDate).diff(moment()) -
+                            updated.remindBefore * 60 * 1000,
                     );
-                    return res.json({ type: "json", data: json });
+                    await taskQueue.add(
+                        "sendReminder",
+                        { taskId: updated._id },
+                        { delay },
+                    );
+                }
+                const payload = buildMessage(
+                    `Done — I've updated "${updated.title || "your task"}".`,
+                );
+                sessionStore.appendTurn(
+                    sessionId,
+                    "model",
+                    JSON.stringify(payload),
+                );
+                return res.json({ type: "json", data: payload });
+            }
+
+            // ================================
+            // EDIT DOCUMENT
+            // ================================
+            if (fn.name === "edit_document") {
+                const { documentId, content, ...updates } = args || {};
+                const buildMessage = (text: string) => ({
+                    type: "view",
+                    style: { padding: 12 },
+                    children: [
+                        {
+                            type: "text",
+                            text,
+                            style: {
+                                fontFamily: "Lato-Regular",
+                                fontSize: 15,
+                                color: "text",
+                            },
+                        },
+                    ],
+                });
+                if (!documentId) {
+                    return res.json({
+                        type: "json",
+                        data: buildMessage(
+                            "I couldn't update the document — I'm missing which document you meant.",
+                        ),
+                    });
+                }
+                const editPayload: Record<string, unknown> = { ...updates };
+                if (typeof content === "string")
+                    editPayload.content = sanitizeDocumentHtml(content);
+                const updated = await DocumentModel.findOneAndUpdate(
+                    { _id: documentId, user: userId },
+                    editPayload,
+                    { new: true, runValidators: true },
+                );
+                if (!updated) {
+                    return res.json({
+                        type: "json",
+                        data: buildMessage(
+                            "I couldn't find that document or you don't have permission to edit it.",
+                        ),
+                    });
+                }
+                const payload = buildMessage(
+                    `Done — I've updated "${updated.title || "your document"}".`,
+                );
+                sessionStore.appendTurn(
+                    sessionId,
+                    "model",
+                    JSON.stringify(payload),
+                );
+                return res.json({ type: "json", data: payload });
+            }
+
+            // ================================
+            // SUMMARIZE SCREEN
+            // ================================
+            if (fn.name === "summarize_screen") {
+                const screenPage = String(args?.page || page).toLowerCase();
+                const focus = args?.focus
+                    ? String(args.focus)
+                    : "(no specific focus)";
+                const cutoff = timeRangeCutoff(args?.timeRange);
+
+                const filterByCutoff = (items: any[], dateKeys: string[]) =>
+                    cutoff
+                        ? items.filter((it: any) =>
+                              dateKeys.some((k) =>
+                                  it[k]
+                                      ? new Date(it[k]).getTime() >=
+                                        cutoff.getTime()
+                                      : false,
+                              ),
+                          )
+                        : items;
+
+                const includeTasks =
+                    screenPage === "tasks" ||
+                    screenPage === "dashboard" ||
+                    screenPage === "general";
+                const includeDocs =
+                    screenPage === "documents" ||
+                    screenPage === "dashboard" ||
+                    screenPage === "general";
+
+                const tasksForSummary = includeTasks
+                    ? filterByCutoff(workspaceContext.tasks, [
+                          "dueDate",
+                          "createdAt",
+                      ])
+                    : [];
+                const docsForSummary = includeDocs
+                    ? filterByCutoff(workspaceContext.documents, [
+                          "updatedAt",
+                          "createdAt",
+                      ])
+                    : [];
+
+                const summaryPrompt = `
+${SYSTEM_NATIVE_GUIDE}
+
+You are summarizing the user's current screen.
+Page: ${screenPage}
+Focus: ${focus}
+TimeRange: ${args?.timeRange || "all"}
+
+Produce ONLY a JSON UI component tree (no HTML, no markdown). Use a 'view' root with 'text' children for headings and bullets, and lists with 'task' or 'document' nodes when referencing specific items. Use real ids only inside the structured nodes — never display ids in any text field. Highlight counts, overdue items, top categories, and recent additions where relevant.
+
+Tasks (${tasksForSummary.length}): ${JSON.stringify(tasksForSummary).slice(0, 20000)}
+Documents (${docsForSummary.length}): ${JSON.stringify(docsForSummary).slice(0, 20000)}
+`.trim();
+
+                const summaryResponse = await ai.models.generateContent({
+                    model: "gemini-2.5-flash",
+                    contents: [
+                        { role: "user", parts: [{ text: summaryPrompt }] },
+                    ],
+                });
+
+                const summaryText: string =
+                    typeof (summaryResponse as any).text === "string"
+                        ? (summaryResponse as any).text
+                        : (summaryResponse as any).candidates?.[0]?.content
+                              ?.parts?.map((p: any) => p.text ?? "")
+                              .join("") || "";
+
+                let jsonOut: any;
+                try {
+                    jsonOut = JSON.parse(
+                        summaryText
+                            .replaceAll("```json", "")
+                            .replaceAll("```", ""),
+                    );
+                } catch {
+                    jsonOut = {
+                        type: "view",
+                        style: { padding: 12 },
+                        children: [
+                            {
+                                type: "text",
+                                text:
+                                    summaryText ||
+                                    "I couldn't put together a summary right now.",
+                                style: {
+                                    fontFamily: "Lato-Regular",
+                                    fontSize: 15,
+                                    color: "text",
+                                },
+                            },
+                        ],
+                    };
                 }
 
-                if (type === "documents") {
-                    const docs = workspaceContext.documents.slice();
-                    const json = buildNativeDocumentsJson(docs);
-
-                    sessionStore.appendTurn(
-                        sessionId,
-                        "model",
-                        JSON.stringify(json),
-                    );
-                    return res.json({ type: "json", data: json });
-                }
+                sessionStore.appendTurn(
+                    sessionId,
+                    "model",
+                    JSON.stringify(jsonOut),
+                );
+                return res.json({ type: "json", data: jsonOut });
             }
 
             // ================================
@@ -1146,7 +1911,7 @@ ${JSON.stringify(workspaceContext).slice(0, 40000)}
             if (fn.name === "create_document") {
                 const document = {
                     title: args.title,
-                    content: args.content,
+                    content: sanitizeDocumentHtml(args.content || "<p></p>"),
                     tag: { title: args.tag?.title, id: String(args.tag?.id) },
                 };
 
