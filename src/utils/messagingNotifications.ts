@@ -11,75 +11,96 @@ export const sendMessageNotification = async ({
     senderId: string;
     message: any;
 }) => {
-    // 1. Get group
     const chat = await ChatModel.findById(chatId);
     if (!chat) return;
 
-    // 2. Get members except sender
     const recipients = chat.members.filter(
-        (id) => id.toString() !== senderId.toString()
+        (m) => m.user.toString() !== senderId.toString()
     );
-
     if (recipients.length === 0) return;
 
-    // 3. Fetch their FCM tokens
     const users = await UserModel.find(
         { _id: { $in: recipients.map((r) => r.user) } },
         "fcmTokens fullName photo"
     );
     const senderUser = await UserModel.findById(senderId, "fullName photo");
 
-    const details = {
-        name: senderUser?.fullName,
-        photo: senderUser?.photo,
-    };
-    if (chat.type === "group") {
-        details.name = chat.name as string;
-        details.photo = chat.groupPhoto as string;
-    }
-
-    let deviceTokens = users.flatMap((u) => u.fcmTokens || []).filter(Boolean);
-
+    const deviceTokens = users
+        .flatMap((u) => u.fcmTokens || [])
+        .filter(Boolean);
     if (deviceTokens.length === 0) return;
 
-    const filesLength = message.files.length;
+    const isGroup = chat.type === "group";
+    const senderName = senderUser?.fullName || "Someone";
+    const senderImage = senderUser?.photo || "";
+    const chatName = isGroup
+        ? (chat.name as string) || "Group chat"
+        : senderName;
+    const chatImage = isGroup
+        ? (chat.groupPhoto as string) || ""
+        : senderImage;
 
-    // 4. Prepare notification
-    const payload = {
-        data: {
-            type: "chat",
-            chatId: chatId.toString(),
-            senderId: senderId.toString(),
-            senderImage: details.photo || "",
-            senderName: details.name,
-            body:
-                message.type === "text"
-                    ? message.content
-                    : message.type === "image"
-                      ? `📷 ${filesLength} Photo${filesLength > 0 ? "s" : ""}`
-                      : message.type === "video"
-                        ? `📹 ${filesLength} Video${filesLength > 0 ? "s" : ""}`
-                        : message.type === "file"
-                          ? `📁 ${filesLength} File${filesLength > 0 ? "s" : ""}`
-                          : "New Message",
-        },
+    const filesLength = message.files?.length ?? 0;
+    const plural = filesLength > 1 ? "s" : "";
+
+    const body =
+        message.type === "text"
+            ? message.content || ""
+            : message.type === "image"
+              ? `📷 ${filesLength} Photo${plural}`
+              : message.type === "video"
+                ? `📹 ${filesLength} Video${plural}`
+                : message.type === "file"
+                  ? `📁 ${filesLength} File${plural}`
+                  : "New Message";
+
+    const sentAt =
+        message.createdAt instanceof Date
+            ? message.createdAt.toISOString()
+            : typeof message.createdAt === "string"
+              ? message.createdAt
+              : new Date().toISOString();
+
+    const data = {
+        type: "chat",
+        chatId: chatId.toString(),
+        senderId: senderId.toString(),
+        senderName,
+        senderImage,
+        chatName,
+        chatImage,
+        isGroup: isGroup ? "true" : "false",
+        messageId: message._id ? String(message._id) : "",
+        messageType: String(message.type || "text"),
+        sentAt,
+        body,
     };
 
-    // 5. Send multicast
     const response = await admin.messaging().sendEachForMulticast({
         tokens: deviceTokens,
-        ...payload,
+        notification: {
+            title: chatName,
+            body,
+            ...(chatImage ? { imageUrl: chatImage } : {}),
+        },
+        data,
+        android: {
+            priority: "high",
+        },
+        apns: {
+            payload: {
+                aps: {
+                    sound: "default",
+                    contentAvailable: true,
+                },
+            },
+        },
     });
 
-    // 6. Clean up invalid tokens
-    const failedTokens = [];
-
+    const failedTokens: string[] = [];
     response.responses.forEach((resp, idx) => {
-        if (!resp.success) {
-            failedTokens.push(deviceTokens[idx]);
-        }
+        if (!resp.success) failedTokens.push(deviceTokens[idx]);
     });
-
     if (failedTokens.length > 0) {
         await UserModel.updateMany(
             { fcmTokens: { $in: failedTokens } },
