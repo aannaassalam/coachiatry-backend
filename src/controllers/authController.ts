@@ -491,27 +491,39 @@ export const updatePassword = catchAsync(
 export const updateFCMToken = catchAsync(
     async (req: any, res: Response, next: NextFunction) => {
         const token = req.body.fcmToken;
+        if (!token) {
+            return sendResponse(
+                res,
+                StatusCodes.BAD_REQUEST,
+                "fcmToken is required",
+            );
+        }
         const user = req.user;
 
         await UserModel.findByIdAndUpdate(user._id, {
-            $push: {
-                fcmTokens: token,
-            },
+            $addToSet: { fcmTokens: token },
         });
 
-        sendResponse(res, StatusCodes.OK, "");
+        sendResponse(res, StatusCodes.OK, "FCM token registered");
     },
 );
 
 export const removeFCMToken = catchAsync(
     async (req: any, res: Response, next: NextFunction) => {
         const token = req.body.fcmToken;
-        const user = req.user;
+        if (!token) {
+            return sendResponse(
+                res,
+                StatusCodes.BAD_REQUEST,
+                "fcmToken is required",
+            );
+        }
 
-        await UserModel.findByIdAndUpdate(user._id, {
-            $pull: { fcmTokens: token },
-        });
+        await UserModel.updateMany(
+            { fcmTokens: token },
+            { $pull: { fcmTokens: token } },
+        );
 
-        sendResponse(res, StatusCodes.OK, "");
+        sendResponse(res, StatusCodes.OK, "FCM token removed");
     },
 );

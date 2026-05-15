@@ -2,6 +2,24 @@ import ChatModel from "../model/chatModel";
 import UserModel from "../model/userModel";
 import admin from "./firebaseAdmin";
 
+const CHAT_CHANNEL_ID = "chat-messages";
+
+/**
+ * Send a chat-message push notification to every recipient of a chat except
+ * the sender.
+ *
+ * Payload shape is deliberately data-rich:
+ *   - `notification.title` / `body` are kept so the OS can render a fallback
+ *     when the app hasn't customised the notification yet (cold start before
+ *     the JS runtime is up; iOS NSE missing).
+ *   - The full `data` block is what the client uses to compose its enriched
+ *     MESSAGING-style notification (Android) or to populate the NSE-served
+ *     communication notification (iOS).
+ *
+ * Per-recipient values (e.g. unread count) would require splitting the
+ * multicast into per-token sends — this version intentionally keeps it as a
+ * single multicast and lets the client maintain its own counter.
+ */
 export const sendMessageNotification = async ({
     chatId,
     senderId,
@@ -61,7 +79,8 @@ export const sendMessageNotification = async ({
               ? message.createdAt
               : new Date().toISOString();
 
-    const data = {
+    // FCM requires `data` values to be strings.
+    const data: Record<string, string> = {
         type: "chat",
         chatId: chatId.toString(),
         senderId: senderId.toString(),
@@ -76,22 +95,36 @@ export const sendMessageNotification = async ({
         body,
     };
 
+    // Platform split:
+    //   - Android: pure data message (no `notification` block, no
+    //     `android.notification`). Skips OS auto-rendering — the client's
+    //     setBackgroundMessageHandler composes the Notifee notification.
+    //     This is the only way to avoid the FCM + Notifee duplicate banners.
+    //   - iOS: APNS alert + mutableContent so the system renders the
+    //     notification and the NSE attaches the avatar. No duplicate because
+    //     iOS doesn't render notifee output while the APNS alert is showing.
     const response = await admin.messaging().sendEachForMulticast({
         tokens: deviceTokens,
-        notification: {
-            title: chatName,
-            body,
-            ...(chatImage ? { imageUrl: chatImage } : {}),
-        },
         data,
         android: {
             priority: "high",
+            collapseKey: `chat-${chatId.toString()}`,
         },
         apns: {
+            headers: {
+                "apns-priority": "10",
+                "apns-push-type": "alert",
+            },
             payload: {
                 aps: {
+                    alert: {
+                        title: chatName,
+                        body: isGroup ? `${senderName}: ${body}` : body,
+                    },
                     sound: "default",
-                    contentAvailable: true,
+                    threadId: chatId.toString(),
+                    mutableContent: true,
+                    category: "chat-message",
                 },
             },
         },
