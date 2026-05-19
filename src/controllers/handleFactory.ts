@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import catchAsync from "./../utils/catchAsync";
 import AppError from "./../utils/appError";
 import APIFeatures from "./../utils/apiFeatures";
-import { Model, Document, Query } from "mongoose";
+import { Model } from "mongoose";
 import { sendEmail } from "../utils/email_sms";
 import { contactUsHTML } from "../constants/constants";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
@@ -29,7 +29,7 @@ interface GetAllOptions extends Message {
     coachTypeFilter?: boolean;
 }
 
-export const deleteOne = (Model: Model<Document>, options?: Message) =>
+export const deleteOne = <T = any>(Model: Model<T>, options?: Message) =>
     catchAsync(async (req: Request, res: Response, next: NextFunction) => {
         const doc = await Model.findByIdAndDelete(req.params.id);
 
@@ -47,7 +47,7 @@ export const deleteOne = (Model: Model<Document>, options?: Message) =>
         );
     });
 
-export const updateOne = (Model: Model<Document>, options?: Message) =>
+export const updateOne = <T = any>(Model: Model<T>, options?: Message) =>
     catchAsync(async (req: Request, res: Response, next: NextFunction) => {
         const doc = await Model.findByIdAndUpdate(req.params.id, req.body, {
             new: true,
@@ -67,7 +67,10 @@ export const updateOne = (Model: Model<Document>, options?: Message) =>
         );
     });
 
-export const createOne = (Model: Model<Document>, options?: CreateOptions) =>
+export const createOne = <T = any>(
+    Model: Model<T>,
+    options?: CreateOptions,
+) =>
     catchAsync(async (req: Request, res: Response, next: NextFunction) => {
         const body = req.body;
         if (options?.userAsDocumentOwner) {
@@ -88,16 +91,14 @@ export const createOne = (Model: Model<Document>, options?: CreateOptions) =>
         );
     });
 
-export const getOne = (Model: Model<Document>, options?: Message) =>
+export const getOne = <T = any>(Model: Model<T>, options?: Message) =>
     catchAsync(async (req: Request, res: Response, next: NextFunction) => {
         const populateFields = req.query.populate
             ? (req.query.populate as any)?.split(",").join(" ")
             : "";
-        let query: Query<Document | null, Document> = Model.findById(
-            req.params.id,
-        ).populate(populateFields); // Explicitly specify the type of query
+        const query = Model.findById(req.params.id).populate(populateFields);
 
-        const doc = await query.exec(); // Execute the query
+        const doc = await query.exec();
 
         if (!doc) {
             return next(
@@ -113,7 +114,7 @@ export const getOne = (Model: Model<Document>, options?: Message) =>
         );
     });
 
-export const getAll = (Model: Model<Document>, options?: GetAllOptions) =>
+export const getAll = <T = any>(Model: Model<T>, options?: GetAllOptions) =>
     catchAsync(async (req: Request, res: Response, next: NextFunction) => {
         let filter = options?.additionalFilter ?? {};
         if (options?.role) filter = { role: options.role };
@@ -161,8 +162,8 @@ export const getAll = (Model: Model<Document>, options?: GetAllOptions) =>
         );
     });
 
-export const getAllUnpaginated = (
-    Model: Model<Document>,
+export const getAllUnpaginated = <T = any>(
+    Model: Model<T>,
     options?: GetAllOptions,
 ) =>
     catchAsync(async (req: Request, res: Response, next: NextFunction) => {

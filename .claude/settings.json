@@ -4,7 +4,8 @@
       "Bash(npx tsc:*)",
       "Bash(find /Users/aannaassalam/Documents/Github/coachiatry-backend/src -type f \\\\\\(-name *.ts -o -name *.js \\\\\\))",
       "Bash(grep -n \"index\\\\|unique\\\\|sparse\" /Users/aannaassalam/Documents/Github/coachiatry-backend/src/model/*.ts)",
-      "Bash(grep -n \"SYSTEM_NATIVE_GUIDE = \\\\`\" /Users/aannaassalam/Documents/Github/coachiatry-backend/src/controllers/LLMController.ts)"
+      "Bash(grep -n \"SYSTEM_NATIVE_GUIDE = \\\\`\" /Users/aannaassalam/Documents/Github/coachiatry-backend/src/controllers/LLMController.ts)",
+      "Bash(echo \"EXIT=$?\")"
     ]
   }
 }

@@ -1,10 +1,10 @@
-import { Document, Query, FilterQuery } from "mongoose";
+import { Query, FilterQuery } from "mongoose";
 
 interface QueryString {
     [key: string]: string;
 }
 
-class APIFeatures<T extends Document> {
+class APIFeatures<T = any> {
     query: Query<T[], T>;
     queryString: QueryString;
     totalCount: number = 0; // To store the total count of documents

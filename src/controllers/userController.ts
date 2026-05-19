@@ -118,11 +118,8 @@ export const suggestUsers = catchAsync(
 
         const allowedUsers: string[] = [
             ...currentUser.sharedViewers.map(String),
+            ...(currentUser.assignedCoach ?? []).map(String),
         ];
-
-        if (currentUser.assignedCoach) {
-            allowedUsers.push(String(currentUser.assignedCoach));
-        }
 
         if (type === "group") {
             const users = await UserModel.find({
