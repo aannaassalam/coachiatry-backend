@@ -11,7 +11,7 @@ export interface IUserDocument extends Document {
     passwordResetExpires: Date;
     assignedCoach: Types.ObjectId[];
     shareId: string;
-    sharedViewers: string[];
+    sharedViewers: Types.ObjectId[];
     active: boolean;
     fcmTokens?: string[];
     otp: string;
@@ -21,7 +21,7 @@ export interface IUserDocument extends Document {
     updatedAt: Date;
     correctPassword(
         candidatePassword: string,
-        userPassword: string
+        userPassword: string,
     ): Promise<boolean>;
     createPasswordResetToken: () => string;
 }
