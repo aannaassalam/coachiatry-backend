@@ -263,20 +263,161 @@ export const accessSharedTasks = catchAsync(
 
 export const importBulkTasks = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const { tasks, userId } = req.body;
-        const user = userId ?? req.user?._id;
+        const user = req.user?._id;
+        if (!user) {
+            return next(new AppError("Authenticated user required", 401));
+        }
 
-        const processedTasks = tasks.map((_task) => {
-            return {
-                ..._task,
-                user,
-                assignedTo: user,
-                status: "68deacdce9c648f5b606740c",
-            };
+        const rawTasks = Array.isArray(req.body.tasks) ? req.body.tasks : [];
+        if (rawTasks.length === 0) {
+            return next(
+                new AppError("Provide a non-empty `tasks` array", 400)
+            );
+        }
+
+        // Strip identifiers, force ownership to the JWT user, require a
+        // title. Conversion of AI-only field shapes (category {id,title},
+        // subtasks {done}, recurrence) is only applied WHEN that shape is
+        // detected — model-shape inputs from other callers pass through
+        // untouched so we don't regress existing flows.
+        const VALID_FREQUENCY = new Set([
+            "none",
+            "daily",
+            "weekly",
+            "monthly",
+            "yearly",
+        ]);
+
+        const sanitized = rawTasks
+            .map((t: any) => {
+                const {
+                    _id,
+                    id,
+                    tempId,
+                    user: _u,
+                    assignedTo: _a,
+                    recurrence,
+                    ...rest
+                } = t || {};
+
+                const out: any = {
+                    ...rest,
+                    user,
+                    assignedTo: user,
+                };
+
+                // category — only transform when given the AI shape
+                // ({ id, title }). String ObjectIds / null / undefined
+                // are passed through unchanged.
+                if (
+                    rest.category &&
+                    typeof rest.category === "object" &&
+                    !Array.isArray(rest.category)
+                ) {
+                    out.category =
+                        typeof rest.category.id === "string"
+                            ? rest.category.id
+                            : null;
+                }
+
+                // subtasks — only transform when the AI shape is detected
+                // (any item has `done` or `description`). Model-shape
+                // [{ title, completed }] passes through untouched.
+                if (Array.isArray(rest.subtasks)) {
+                    const isAiShape = rest.subtasks.some(
+                        (s: any) =>
+                            s &&
+                            typeof s === "object" &&
+                            ("done" in s || "description" in s)
+                    );
+                    if (isAiShape) {
+                        out.subtasks = rest.subtasks
+                            .filter(
+                                (s: any) =>
+                                    s &&
+                                    typeof s.title === "string" &&
+                                    s.title.trim()
+                            )
+                            .map((s: any) => ({
+                                title: s.title,
+                                completed: Boolean(s.done ?? s.completed),
+                            }));
+                    }
+                    // else: pass through whatever the caller sent
+                }
+
+                // recurrence → frequency — only when caller didn't send
+                // frequency directly. Keeps existing callers (which already
+                // send `frequency`) untouched.
+                if (
+                    typeof recurrence === "string" &&
+                    rest.frequency === undefined
+                ) {
+                    out.frequency = VALID_FREQUENCY.has(recurrence)
+                        ? recurrence
+                        : "none";
+                }
+
+                return out;
+            })
+            .filter((t: any) => typeof t.title === "string" && t.title.trim());
+
+        if (sanitized.length === 0) {
+            return next(
+                new AppError(
+                    "No valid tasks to import (each task needs a `title`)",
+                    400
+                )
+            );
+        }
+
+        // Resolve a default status dynamically instead of hardcoding an
+        // ObjectId. Prefer a status whose title matches common backlog
+        // names, otherwise fall back to the oldest available status the
+        // user can see (their own or public).
+        const explicitStatusId = req.body.statusId
+            ? String(req.body.statusId)
+            : null;
+        let defaultStatusId: string | null = explicitStatusId;
+        if (!defaultStatusId) {
+            const todoMatch = await StatusModel.findOne({
+                $or: [{ user }, { public: true }],
+                active: true,
+                title: { $regex: /^(to\s?do|todo|backlog|pending|new)$/i },
+            })
+                .select("_id")
+                .lean();
+            if (todoMatch) {
+                defaultStatusId = String(todoMatch._id);
+            } else {
+                const oldest = await StatusModel.findOne({
+                    $or: [{ user }, { public: true }],
+                    active: true,
+                })
+                    .sort({ createdAt: 1 })
+                    .select("_id")
+                    .lean();
+                defaultStatusId = oldest ? String(oldest._id) : null;
+            }
+        }
+        if (!defaultStatusId) {
+            return next(
+                new AppError(
+                    "No status column available — create one before importing tasks",
+                    400
+                )
+            );
+        }
+
+        const processedTasks = sanitized.map((t: any) => ({
+            ...t,
+            status: t.status ?? defaultStatusId,
+        }));
+
+        const created = await TaskModel.insertMany(processedTasks);
+
+        sendResponse(res, 200, "Tasks imported successfully!", {
+            imported: created.length,
         });
-
-        await TaskModel.insertMany(processedTasks);
-
-        sendResponse(res, 200, "Tasks imported successfully!");
     }
 );

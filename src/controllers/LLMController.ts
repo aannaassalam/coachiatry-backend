@@ -730,38 +730,54 @@ Documents (${docsForSummary.length}): ${JSON.stringify(docsForSummary).slice(0, 
 );
 
 const SYSTEM_STYLE_GUIDE_FOR_TRANSCRIPTS = `
-You are an AI assistant that generates strict and valid HTML.
+You are an AI assistant that operates STRICTLY on a single meeting transcript.
 
-List formatting rules (mandatory):
-- All lists must use <ol> elements only.
-- Never use <ul> under any circumstance.
-- All <li> elements must be children of <ol>. Never output a bare <li>.
-- For any multiple points, steps, tasks, or sequences, wrap items within a single <ol> containing only <li> elements.
+# Knowledge boundary
+Your only knowledge source is the meeting transcript provided in this prompt.
+- Do NOT use prior conversation turns, general knowledge, or assumptions.
+- If a topic is not in the transcript, say "the transcript does not cover this" — do not speculate.
 
-Line breaks and formatting:
-- Never use newline characters (\\n) in HTML output.
-- To separate lines, use <br/> inside a <p> or other HTML container.
-- Always return well-structured HTML nodes rather than free text.
+# Actions
+You will receive an "Action" field. Your behavior is determined by it:
 
-Transcript context only:
-- Your only knowledge source is the provided meeting transcript. Do not reference any information outside this transcript.
-- If asked for details not present in the transcript, state that the information is not available in the transcript.
+## short_summary
+Produce a concise HTML overview of the meeting. Cover themes, decisions, and outcomes. Follow the HTML rules below.
 
-Action-specific behavior:
-- **short_summary**: Produce a concise overall summary of the meeting in valid HTML. Focus on major themes, decisions, and outcomes.
-- **detailed_summary**: Respond *only* to the specific user query or question using information from the transcript. Do not restate or include the general summary. If the answer is not explicitly found, respond clearly that the transcript does not contain that information.
-- **generate_tasks**: Derive actionable tasks from the transcript and call the create_tasks function with structured results.
+## detailed_summary
+Answer the user's specific question using only the transcript. Do NOT restate the overall summary. If the answer is not explicitly present, respond plainly: "The transcript does not contain that information."
 
-Tool usage expectations:
-- When asked to generate tasks from the transcript, call the create_tasks function.
-- For short_summary or detailed_summary, produce compliant HTML following the above formatting rules.
+## generate_tasks
+Call the create_tasks tool with actionable items extracted from the transcript.
+- Do NOT produce HTML for this action — your ONLY output is the tool call.
+- Each task must be directly traceable to a specific point in the transcript (a decision, a commitment, a follow-up requested, a deadline mentioned).
+- If you cannot quote a transcript segment that justifies a task, do NOT emit that task.
+- Do NOT pad to a target count. Emit the exact number of genuinely actionable items present in the transcript. Zero is a valid answer — call create_tasks with tasks: [].
+- Title: short, specific, action-oriented (verb-first when natural). E.g. "Send Q4 budget summary to finance" — NOT "Budget".
+- Description: 1-2 sentences adding concrete context from the transcript (who, what, why). Never invent details.
+- priority: infer from urgency cues — "ASAP" / "urgent" → high, "if you get a chance" / "sometime soon" → low, default → medium.
+- dueDate: if the transcript mentions a deadline, use that (ISO 8601 with HH:00 or HH:30). Otherwise default to 3 days from now at 10:00.
+- category.id: pick from the provided categories the one whose domain best matches the task. Required.
+- subtasks: include ONLY if the transcript explicitly enumerates them. Leave empty otherwise.
 
-Response constraints:
-- If only an action is provided without a query, automatically perform the action using the transcript context without asking clarifying questions.
-- Ask clarifying questions only if missing information would significantly alter correctness.
-- Never output JSON to the user unless returning a tool payload.
-- Always produce complete and valid HTML markup.
+# HTML rules (apply ONLY to short_summary and detailed_summary)
+- Use <ol> for ordered lists. Never <ul>.
+- All <li> must be children of <ol>.
+- No newline characters (\\n). Use <br/> inside containers for line breaks if needed.
+- Allowed tags: <p>, <div>, <b>, <strong>, <i>, <em>, <ol>, <li>, <a>. Nothing else.
+- Never expose internal identifiers (ObjectIds, field names) in user-visible text.
+
+# Response constraints
+- For generate_tasks: ALWAYS call the tool. Never return HTML, never return plain text.
+- For summary actions: always return complete, valid HTML — never JSON.
+- If an action is provided without a query, perform the action using the transcript context without asking clarifying questions.
+- Ask clarifying questions only when missing information would materially change correctness.
 `.trim();
+
+const ALLOWED_TRANSCRIPT_ACTIONS = new Set([
+    "short_summary",
+    "detailed_summary",
+    "generate_tasks",
+]);
 
 export const transcriptionAIController = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
@@ -777,12 +793,19 @@ export const transcriptionAIController = catchAsync(
                 .status(400)
                 .json({ error: "transcriptionId is required" });
         }
+        if (!ALLOWED_TRANSCRIPT_ACTIONS.has(action)) {
+            return res.status(400).json({
+                error: `Invalid action "${action}". Allowed: ${[...ALLOWED_TRANSCRIPT_ACTIONS].join(", ")}`,
+            });
+        }
 
         // Session handling for iterative Q&A around the same transcript
         const sessionId = getOrCreateSessionId(req);
         await sessionStore.upsert(sessionId, userId);
 
-        // Load transcript and categories for category inference
+        // Load transcript and categories. The `active: true` filter is
+        // intentional — task generation is gated to the meeting the user is
+        // currently in. Past meetings cannot generate new tasks.
         const [doc, categoriesRaw] = await Promise.all([
             TranscriptionModel.findOne({
                 _id: transcriptionId,
@@ -795,7 +818,9 @@ export const transcriptionAIController = catchAsync(
         ]);
 
         if (!doc) {
-            return res.status(404).json({ error: "Transcription not found" });
+            return res.status(404).json({
+                error: "Transcription not found (or no longer active — task generation is only available for the meeting you're currently in).",
+            });
         }
 
         const transcriptText = renderTranscriptForPrompt(doc);
@@ -808,18 +833,48 @@ export const transcriptionAIController = catchAsync(
         // Build base prompts
         const systemPrompt = SYSTEM_STYLE_GUIDE_FOR_TRANSCRIPTS;
 
+        // Action-specific reinforcement — mirrors the directive pattern in
+        // aiController above so we don't rely solely on the system prompt.
+        const actionDirective = (() => {
+            if (action === "generate_tasks") {
+                return `
+ACTION DIRECTIVE — generate_tasks:
+You MUST call the create_tasks tool now. Do NOT respond with HTML or text.
+Extract every actionable task that is directly grounded in the transcript.
+If the transcript has no actionable items, call create_tasks with tasks: [].
+Available category ids: ${JSON.stringify(categoryCatalog.map((c) => c.id))}
+`.trim();
+            }
+            if (action === "detailed_summary") {
+                return `
+ACTION DIRECTIVE — detailed_summary:
+Answer the user's specific question using ONLY the transcript.
+If the answer is not in the transcript, reply with: "The transcript does not contain that information."
+`.trim();
+            }
+            return `
+ACTION DIRECTIVE — short_summary:
+Produce a concise HTML summary of the meeting following the HTML rules.
+`.trim();
+        })();
+
         const userPromptBase = `
-Action: ${action}
+${actionDirective}
+
 TranscriptTitle: ${doc.title}
 UserQuestion: ${query || "(none)"}
-
 
 Transcript:
 ${transcriptText}
 `.trim();
 
-        // Configure tools only for generate_tasks
-        const tools =
+        // Configure tools only for generate_tasks AND force the tool call
+        // — without `mode: "ANY"` Gemini occasionally returns plain text
+        // even when we asked for a tool, leaving us empty-handed.
+        // `any` for the toolConfig shape — matches the pattern used by
+        // aiController above where the strict GenerateContentConfig type
+        // doesn't accept our string-literal mode value.
+        const tools: any =
             action === "generate_tasks"
                 ? {
                       tools: [
@@ -832,6 +887,9 @@ ${transcriptText}
                               ],
                           },
                       ],
+                      toolConfig: {
+                          functionCallingConfig: { mode: "ANY" },
+                      },
                   }
                 : undefined;
 
@@ -904,11 +962,29 @@ ${transcriptText}
 
                 res.set("X-Session-Id", sessionId);
                 res.set("Access-Control-Expose-Headers", "X-Session-Id");
-                return res.json({ type: "tasks", data: { tasks: normalized } });
+                return res.json({
+                    type: "tasks",
+                    data: {
+                        tasks: normalized,
+                        transcriptionId: String(doc._id),
+                    },
+                });
             }
         }
 
-        // For summaries: produce HTML from text output, sanitize and enforce rules
+        // generate_tasks was requested but Gemini didn't return a tool call —
+        // return an empty tasks payload rather than silently falling into
+        // the HTML branch (which would confuse the extension client).
+        if (action === "generate_tasks") {
+            res.set("X-Session-Id", sessionId);
+            res.set("Access-Control-Expose-Headers", "X-Session-Id");
+            return res.json({
+                type: "tasks",
+                data: { tasks: [], transcriptionId: String(doc._id) },
+            });
+        }
+
+        // Summaries: produce HTML from text output, sanitize, enforce rules.
         const rawHtml = toSafeHtml(textOutput);
         const safe =
             enforceHtmlRules(sanitizeHtml(rawHtml)) || toSafeHtml(textOutput);

@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from "express";
 import authRouter from "./authRouter";
 import userRouter from "./userRouter";
 import transcriptionRouter from "./transcriptionRouter";
+import meetingsRouter from "./meetingsRouter";
 import documentRouter from "./documentRouter";
 import chatRouter from "./chatRouter";
 import messageRouter from "./messageRouter";
@@ -82,6 +83,7 @@ router.get(
 router.use("/auth", authRouter);
 router.use("/user", userRouter);
 router.use("/transcriptions", transcriptionRouter);
+router.use("/meetings", meetingsRouter);
 router.use("/documents", documentRouter);
 router.use("/chat", chatRouter);
 router.use("/message", messageRouter);

@@ -1,6 +1,9 @@
 import { Server } from "socket.io";
 import type { Server as HTTPServer } from "http";
 import registerSocketHandlers from "../sockets";
+import meetSocket, {
+    authenticateMeetSocket,
+} from "../sockets/meet.socket";
 
 let io: Server | null;
 
@@ -17,6 +20,19 @@ function initSocket(server: HTTPServer) {
 
         socket.on("disconnect", () => {
             console.log("❌ Client disconnected:", socket.id);
+        });
+    });
+
+    // Extension's Google Meet pipeline runs on its own namespace with
+    // mandatory JWT auth, so it doesn't interfere with chat sockets.
+    const meetNs = io.of("/meet");
+    meetNs.use(authenticateMeetSocket);
+    meetNs.on("connection", (socket) => {
+        const userId = socket.data.userId;
+        console.log(`🎙  Meet client connected: ${socket.id} user=${userId}`);
+        meetSocket(meetNs, socket as any);
+        socket.on("disconnect", () => {
+            console.log(`🎙  Meet client disconnected: ${socket.id}`);
         });
     });
 }

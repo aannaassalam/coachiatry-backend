@@ -144,10 +144,17 @@ export const signup = catchAsync(
         });
 
         // Create direct chats with all admins
-        const admins = await UserModel.find({ role: "admin", active: true }).select("_id");
+        const admins = await UserModel.find({
+            role: "admin",
+            active: true,
+        }).select("_id");
         await Promise.all(
             admins.map((admin) =>
-                createDirectChatIfNotExists(newUser._id, admin._id, newUser._id),
+                createDirectChatIfNotExists(
+                    newUser._id,
+                    admin._id,
+                    newUser._id,
+                ),
             ),
         );
 
@@ -213,7 +220,7 @@ export const login = catchAsync(
 
 export const googleAuth = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const { id_token, platform } = req.body;
+        const { id_token, platform, source } = req.body;
 
         if (!id_token) {
             return next(new AppError("Missing Google ID token", 400));
@@ -237,6 +244,16 @@ export const googleAuth = catchAsync(
         // Check or create user in your DB
         let user = await UserModel.findOne({ email });
         if (!user) {
+            // The extension may only sign IN existing users. New accounts must
+            // be created via the website so the onboarding flow runs in full.
+            if (source === "extension") {
+                return next(
+                    new AppError(
+                        "No account found. Please sign up on the Coachiatry website first, then log in here.",
+                        StatusCodes.NOT_FOUND
+                    )
+                );
+            }
             user = await UserModel.create({
                 email,
                 fullName,
@@ -255,7 +272,10 @@ export const googleAuth = catchAsync(
             });
 
             // Create direct chats with all admins
-            const admins = await UserModel.find({ role: "admin", active: true }).select("_id");
+            const admins = await UserModel.find({
+                role: "admin",
+                active: true,
+            }).select("_id");
             await Promise.all(
                 admins.map((admin) =>
                     createDirectChatIfNotExists(user._id, admin._id, user._id),
