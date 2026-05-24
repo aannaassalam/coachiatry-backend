@@ -23,14 +23,14 @@ export const createTask = catchAsync(
 
             const delay = Math.max(
                 0,
-                nextDue.diff(moment()) - doc.remindBefore * 60 * 1000
+                nextDue.diff(moment()) - doc.remindBefore * 60 * 1000,
             );
 
             await taskQueue.add("sendReminder", { taskId: doc._id }, { delay });
         }
 
         sendResponse(res, 201, `Task created successfully`, doc);
-    }
+    },
 );
 
 export const createTaskByCoach = catchAsync(
@@ -43,14 +43,14 @@ export const createTaskByCoach = catchAsync(
 
             const delay = Math.max(
                 0,
-                nextDue.diff(moment()) - doc.remindBefore * 60 * 1000
+                nextDue.diff(moment()) - doc.remindBefore * 60 * 1000,
             );
 
             await taskQueue.add("sendReminder", { taskId: doc._id }, { delay });
         }
 
         sendResponse(res, 201, `Task created successfully`, doc);
-    }
+    },
 );
 
 export const assignToCoach = catchAsync(
@@ -71,7 +71,7 @@ export const assignToCoach = catchAsync(
         // If admin/manager/coach should be allowed too, tell me and I’ll modify.
         if (task.user.toString() !== requester._id.toString()) {
             return next(
-                new AppError("You are not allowed to assign this task", 403)
+                new AppError("You are not allowed to assign this task", 403),
             );
         }
 
@@ -79,12 +79,12 @@ export const assignToCoach = catchAsync(
         const patientAssignedCoaches = requester.assignedCoach || [];
 
         const isValidCoach = patientAssignedCoaches.some(
-            (id: any) => id.toString() === coachId.toString()
+            (id: any) => id.toString() === coachId.toString(),
         );
 
         if (!isValidCoach) {
             return next(
-                new AppError("This coach is not assigned to the patient", 403)
+                new AppError("This coach is not assigned to the patient", 403),
             );
         }
 
@@ -97,7 +97,7 @@ export const assignToCoach = catchAsync(
             taskId: task._id,
             assignedTo: task.assignedTo,
         });
-    }
+    },
 );
 
 export const editTask = catchAsync(
@@ -121,14 +121,14 @@ export const editTask = catchAsync(
 
             const delay = Math.max(
                 0,
-                nextDue.diff(moment()) - doc.remindBefore * 60 * 1000
+                nextDue.diff(moment()) - doc.remindBefore * 60 * 1000,
             );
 
             await taskQueue.add("sendReminder", { taskId: doc._id }, { delay });
         }
 
         sendResponse(res, 200, "Task updated successfully", doc);
-    }
+    },
 );
 
 export const deleteTask = catchAsync(
@@ -139,8 +139,8 @@ export const deleteTask = catchAsync(
             return next(
                 new AppError(
                     `No ${TaskModel.modelName} found with that ID`,
-                    404
-                )
+                    404,
+                ),
             );
         }
 
@@ -151,7 +151,7 @@ export const deleteTask = catchAsync(
         }
 
         sendResponse(res, 200, "Task deleted successfully", null);
-    }
+    },
 );
 
 export const updateTaskStatus = catchAsync(async (req, res) => {
@@ -175,7 +175,7 @@ export const updateTaskStatus = catchAsync(async (req, res) => {
 
         // Reset status to TODO for next time
         const todoStatus = await StatusModel.findById(
-            "68deacdce9c648f5b606740c"
+            "68deacdce9c648f5b606740c",
         );
         if (todoStatus) {
             task.status = todoStatus._id;
@@ -186,7 +186,7 @@ export const updateTaskStatus = catchAsync(async (req, res) => {
         if (task.remindBefore) {
             const delay = Math.max(
                 0,
-                nextDue.getTime() - Date.now() - task.remindBefore
+                nextDue.getTime() - Date.now() - task.remindBefore,
             );
 
             await taskQueue.add("sendReminder", { taskId: id }, { delay });
@@ -204,7 +204,7 @@ export const updateSubtaskStatus = catchAsync(
             // Find the task and subtask first to get current completed value
             const task = await Task.findOne(
                 { _id: task_id, "subtasks._id": subtask_id },
-                { "subtasks.$": 1 }
+                { "subtasks.$": 1 },
             );
 
             if (!task || !task.subtasks || task.subtasks.length === 0) {
@@ -219,7 +219,7 @@ export const updateSubtaskStatus = catchAsync(
             const updatedTask = await Task.findOneAndUpdate(
                 { _id: task_id, "subtasks._id": subtask_id },
                 { $set: { "subtasks.$.completed": newCompleted } },
-                { new: true }
+                { new: true },
             );
 
             res.json(updatedTask);
@@ -229,7 +229,7 @@ export const updateSubtaskStatus = catchAsync(
                 error,
             });
         }
-    }
+    },
 );
 
 export const accessSharedTasks = catchAsync(
@@ -248,7 +248,7 @@ export const accessSharedTasks = catchAsync(
 
         const features = new APIFeatures(
             TaskModel.find(filter),
-            req.query as any
+            req.query as any,
         )
             .filter()
             .sort()
@@ -258,7 +258,7 @@ export const accessSharedTasks = catchAsync(
         const doc = await features.query;
 
         sendResponse(res, 200, "Tasks retrieved successfully", doc);
-    }
+    },
 );
 
 export const importBulkTasks = catchAsync(
@@ -270,9 +270,7 @@ export const importBulkTasks = catchAsync(
 
         const rawTasks = Array.isArray(req.body.tasks) ? req.body.tasks : [];
         if (rawTasks.length === 0) {
-            return next(
-                new AppError("Provide a non-empty `tasks` array", 400)
-            );
+            return next(new AppError("Provide a non-empty `tasks` array", 400));
         }
 
         // Strip identifiers, force ownership to the JWT user, require a
@@ -328,7 +326,7 @@ export const importBulkTasks = catchAsync(
                         (s: any) =>
                             s &&
                             typeof s === "object" &&
-                            ("done" in s || "description" in s)
+                            ("done" in s || "description" in s),
                     );
                     if (isAiShape) {
                         out.subtasks = rest.subtasks
@@ -336,7 +334,7 @@ export const importBulkTasks = catchAsync(
                                 (s: any) =>
                                     s &&
                                     typeof s.title === "string" &&
-                                    s.title.trim()
+                                    s.title.trim(),
                             )
                             .map((s: any) => ({
                                 title: s.title,
@@ -366,8 +364,8 @@ export const importBulkTasks = catchAsync(
             return next(
                 new AppError(
                     "No valid tasks to import (each task needs a `title`)",
-                    400
-                )
+                    400,
+                ),
             );
         }
 
@@ -383,7 +381,7 @@ export const importBulkTasks = catchAsync(
             const todoMatch = await StatusModel.findOne({
                 $or: [{ user }, { public: true }],
                 active: true,
-                title: { $regex: /^(to\s?do|todo|backlog|pending|new)$/i },
+                title: { $in: ["To Do", "Todo"] },
             })
                 .select("_id")
                 .lean();
@@ -404,8 +402,8 @@ export const importBulkTasks = catchAsync(
             return next(
                 new AppError(
                     "No status column available — create one before importing tasks",
-                    400
-                )
+                    400,
+                ),
             );
         }
 
@@ -419,5 +417,5 @@ export const importBulkTasks = catchAsync(
         sendResponse(res, 200, "Tasks imported successfully!", {
             imported: created.length,
         });
-    }
+    },
 );
