@@ -27,6 +27,11 @@ interface GetAllOptions extends Message {
     additionalFilter?: object;
     publicTypeFilter?: boolean;
     coachTypeFilter?: boolean;
+    // Paths that must always be populated AND resolve to a non-null doc.
+    // Tasks with a dangling FK (or no FK at all) on any listed path are
+    // dropped from the response. Applied in addition to the caller's
+    // ?populate= so the field is never silently missed.
+    requirePopulated?: string[];
 }
 
 export const deleteOne = <T = any>(Model: Model<T>, options?: Message) =>
@@ -188,12 +193,25 @@ export const getAllUnpaginated = <T = any>(
             };
         }
 
+        if (options?.requirePopulated?.length) {
+            for (const path of options.requirePopulated) {
+                filter = { ...filter, [path]: { $ne: null } };
+            }
+        }
+
         const features = new APIFeatures(Model.find(filter), req.query as any)
             .filter()
             .sort()
             .limitFields()
             .search()
             .populate();
+
+        if (options?.requirePopulated?.length) {
+            for (const path of options.requirePopulated) {
+                // @ts-expect-error: type widening from populate()
+                features.query = features.query.populate(path);
+            }
+        }
 
         if (req.query.limit) {
             const limit = parseInt(req.query.limit as string, 10);
@@ -202,7 +220,13 @@ export const getAllUnpaginated = <T = any>(
             }
         }
 
-        const doc = await features.query;
+        let doc = (await features.query) as any[];
+
+        if (options?.requirePopulated?.length && Array.isArray(doc)) {
+            doc = doc.filter((d) =>
+                options.requirePopulated!.every((p) => d?.[p] != null),
+            );
+        }
 
         sendResponse(
             res,

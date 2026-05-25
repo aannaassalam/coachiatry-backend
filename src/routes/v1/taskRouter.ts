@@ -20,14 +20,21 @@ router.use(protect);
 
 router
     .route("/")
-    .get(factory.getAllUnpaginated(TaskModel, { currentUserOnly: true }))
+    .get(
+        factory.getAllUnpaginated(TaskModel, {
+            currentUserOnly: true,
+            requirePopulated: ["status", "category"],
+        })
+    )
     .post(createTask);
 
 router
     .route("/coach")
     .get(
         restrictTo("admin", "manager", "coach"),
-        factory.getAllUnpaginated(TaskModel)
+        factory.getAllUnpaginated(TaskModel, {
+            requirePopulated: ["status", "category"],
+        })
     )
     .post(createTaskByCoach);
 

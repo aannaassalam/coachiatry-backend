@@ -244,7 +244,11 @@ export const accessSharedTasks = catchAsync(
             throw new AppError("Access revoked or not granted", 403);
         }
 
-        let filter = { user: sharer._id };
+        const filter = {
+            user: sharer._id,
+            status: { $ne: null },
+            category: { $ne: null },
+        };
 
         const features = new APIFeatures(
             TaskModel.find(filter),
@@ -255,7 +259,10 @@ export const accessSharedTasks = catchAsync(
             .limitFields()
             .search()
             .populate();
-        const doc = await features.query;
+        features.query = features.query.populate("status").populate("category");
+
+        const raw = (await features.query) as any[];
+        const doc = raw.filter((t) => t?.status != null && t?.category != null);
 
         sendResponse(res, 200, "Tasks retrieved successfully", doc);
     },

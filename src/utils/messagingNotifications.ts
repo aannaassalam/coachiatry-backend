@@ -128,6 +128,15 @@ export const sendMessageNotification = async ({
                 },
             },
         },
+        // Web: pure data message. The service worker's onBackgroundMessage
+        // composes the notification, matching the Android approach and
+        // keeping the same `data` payload across all three platforms.
+        webpush: {
+            headers: {
+                Urgency: "high",
+                TTL: "86400",
+            },
+        },
     });
 
     const failedTokens: string[] = [];
