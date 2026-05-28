@@ -50,11 +50,12 @@ const taskSchema = new Schema<ITaskDocument>(
             enum: ["none", "daily", "weekly", "monthly", "yearly"],
             default: "none",
         },
-        assignedTo: {
-            type: mongoose.Types.ObjectId,
-            required: true,
-            ref: "User",
-        },
+        assignedTo: [
+            {
+                type: mongoose.Types.ObjectId,
+                ref: "User",
+            },
+        ],
         remindBefore: {
             type: Number,
             default: null,

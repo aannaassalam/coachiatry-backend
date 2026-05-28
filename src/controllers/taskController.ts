@@ -15,7 +15,7 @@ export const createTask = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const body = req.body;
         body.user = req.user?._id;
-        body.assignedTo = req.user?._id;
+        body.assignedTo = [req.user?._id];
         const doc = await TaskModel.create(body);
 
         if (doc.remindBefore) {
@@ -35,7 +35,7 @@ export const createTask = catchAsync(
 
 export const createTaskByCoach = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const body = { ...req.body, assignedTo: req.body.user };
+        const body = { ...req.body, assignedTo: [req.body.user] };
         const doc = await TaskModel.create(body);
 
         if (doc.remindBefore) {
@@ -76,20 +76,29 @@ export const assignToCoach = catchAsync(
         }
 
         // ✅ Ensure the selected coach is one of patient's assigned coaches
-        const patientAssignedCoaches = requester.assignedCoach || [];
+        // const patientAssignedCoaches = requester.assignedCoach || [];
 
-        const isValidCoach = patientAssignedCoaches.some(
-            (id: any) => id.toString() === coachId.toString(),
+        // const isValidCoach = patientAssignedCoaches.some(
+        //     (id: any) => id.toString() === coachId.toString(),
+        // );
+
+        // if (!isValidCoach) {
+        //     return next(
+        //         new AppError("This coach is not assigned to the patient", 403),
+        //     );
+        // }
+
+        // Toggle: add if not present, remove if already assigned
+        const alreadyAssigned = task.assignedTo.some(
+            (id) => id.toString() === coachId.toString(),
         );
-
-        if (!isValidCoach) {
-            return next(
-                new AppError("This coach is not assigned to the patient", 403),
-            );
+        if (alreadyAssigned) {
+            task.assignedTo = task.assignedTo.filter(
+                (id) => id.toString() !== coachId.toString(),
+            ) as any;
+        } else {
+            task.assignedTo.push(coachId);
         }
-
-        // ✅ Assign task to selected coach
-        task.assignedTo = coachId;
 
         await task.save();
 
@@ -268,6 +277,43 @@ export const accessSharedTasks = catchAsync(
     },
 );
 
+// GET /api/v1/task/coach/:userId
+// Coach/manager/admin view of a specific client's tasks: everything the
+// client OWNS (`user`) OR is ASSIGNED to (`assignedTo` array contains them).
+// Mirrors the personal list's "owned or assigned" scope, but for the viewed
+// client instead of the logged-in user. Dangling status/category refs are
+// dropped after populate (same as accessSharedTasks).
+export const getCoachTasks = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { userId } = req.params;
+        if (!userId) {
+            return next(new AppError("userId is required", 400));
+        }
+
+        const filter = {
+            $or: [{ user: userId }, { assignedTo: userId }],
+            status: { $ne: null },
+            category: { $ne: null },
+        };
+
+        const features = new APIFeatures(
+            TaskModel.find(filter),
+            req.query as any,
+        )
+            .filter()
+            .sort()
+            .limitFields()
+            .search()
+            .populate();
+        features.query = features.query.populate("status").populate("category");
+
+        const raw = (await features.query) as any[];
+        const doc = raw.filter((t) => t?.status != null && t?.category != null);
+
+        sendResponse(res, 200, "Tasks retrieved successfully", doc);
+    },
+);
+
 export const importBulkTasks = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const user = req.user?._id;
@@ -308,7 +354,7 @@ export const importBulkTasks = catchAsync(
                 const out: any = {
                     ...rest,
                     user,
-                    assignedTo: user,
+                    assignedTo: [user],
                 };
 
                 // category — only transform when given the AI shape
@@ -386,7 +432,7 @@ export const importBulkTasks = catchAsync(
         let defaultStatusId: string | null = explicitStatusId;
         if (!defaultStatusId) {
             const todoMatch = await StatusModel.findOne({
-                $or: [{ user }, { public: true }],
+                $or: [{ user }, { public: true, user: null }],
                 active: true,
                 title: { $in: ["To Do", "Todo"] },
             })
@@ -396,7 +442,7 @@ export const importBulkTasks = catchAsync(
                 defaultStatusId = String(todoMatch._id);
             } else {
                 const oldest = await StatusModel.findOne({
-                    $or: [{ user }, { public: true }],
+                    $or: [{ user }, { public: true, user: null }],
                     active: true,
                 })
                     .sort({ createdAt: 1 })

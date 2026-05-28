@@ -3,6 +3,7 @@ import { protect, restrictTo } from "../../controllers/authController";
 import { validateDocumentUpdate } from "../../utils/validator";
 import * as factory from "./../../controllers/handleFactory";
 import CategoryModel from "../../model/categoryModel";
+import { deleteCategory } from "../../controllers/categoryController";
 
 const router = express.Router();
 router.use(protect);
@@ -32,6 +33,7 @@ router
 router
     .route("/:id")
     .get(factory.getOne(CategoryModel))
-    .patch(validateDocumentUpdate, factory.updateOne(CategoryModel));
+    .patch(validateDocumentUpdate, factory.updateOne(CategoryModel))
+    .delete(deleteCategory);
 
 export default router;

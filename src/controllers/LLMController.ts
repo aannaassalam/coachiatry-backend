@@ -813,7 +813,7 @@ export const transcriptionAIController = catchAsync(
                 active: true,
             }).lean(),
             CategoryModel.find({
-                $or: [{ public: true }, { user: userId }],
+                $or: [{ public: true, user: null }, { user: userId }],
             }).lean(),
         ]);
 

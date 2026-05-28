@@ -7,6 +7,7 @@ import {
     createTaskByCoach,
     deleteTask,
     editTask,
+    getCoachTasks,
     importBulkTasks,
     updateSubtaskStatus,
     updateTaskStatus,
@@ -22,21 +23,22 @@ router
     .route("/")
     .get(
         factory.getAllUnpaginated(TaskModel, {
-            currentUserOnly: true,
+            ownedOrAssignedToCurrentUser: true,
             requirePopulated: ["status", "category"],
         })
     )
     .post(createTask);
 
-router
-    .route("/coach")
-    .get(
-        restrictTo("admin", "manager", "coach"),
-        factory.getAllUnpaginated(TaskModel, {
-            requirePopulated: ["status", "category"],
-        })
-    )
-    .post(createTaskByCoach);
+router.post("/coach", createTaskByCoach);
+
+// Coach/manager/admin viewing a specific client's tasks (owned by OR
+// assigned to that client). Path param keeps the client id out of the
+// generic query-filter pipeline.
+router.get(
+    "/coach/:userId",
+    restrictTo("admin", "manager", "coach"),
+    getCoachTasks
+);
 
 router.patch("/assign-toggle", assignToCoach);
 router.patch("/move-to-status/:id", updateTaskStatus);

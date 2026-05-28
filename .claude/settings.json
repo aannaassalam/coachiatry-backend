@@ -5,7 +5,19 @@
       "Bash(find /Users/aannaassalam/Documents/Github/coachiatry-backend/src -type f \\\\\\(-name *.ts -o -name *.js \\\\\\))",
       "Bash(grep -n \"index\\\\|unique\\\\|sparse\" /Users/aannaassalam/Documents/Github/coachiatry-backend/src/model/*.ts)",
       "Bash(grep -n \"SYSTEM_NATIVE_GUIDE = \\\\`\" /Users/aannaassalam/Documents/Github/coachiatry-backend/src/controllers/LLMController.ts)",
-      "Bash(echo \"EXIT=$?\")"
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(npx ts-node-dev *)",
+      "Read(//Users/aannaassalam/Documents/Github/**)",
+      "Bash(sed -n '1,90p' components/Clients/Task/ListView.tsx)",
+      "Bash(sed -n '150,185p' pages/clients/\\\\[userId\\\\]/index.tsx)"
+    ],
+    "additionalDirectories": [
+      "/Users/aannaassalam/Documents/Github/coachiatry/pages/api/auth",
+      "/Users/aannaassalam/Documents/Github/coachiatry/external-api/endpoints",
+      "/Users/aannaassalam/Documents/Github/coachiatry/external-api/functions",
+      "/Users/aannaassalam/Documents/Github/coachiatry/components/Clients/Task",
+      "/Users/aannaassalam/Documents/Github/coachiatry/components/Tasks",
+      "/Users/aannaassalam/Documents/Github/coachiatry/pages"
     ]
   }
 }

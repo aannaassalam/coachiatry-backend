@@ -24,6 +24,11 @@ interface CreateOptions extends Message {
 interface GetAllOptions extends Message {
     role?: string;
     currentUserOnly?: boolean;
+    // Scope to docs the current user OWNS (`user`) OR is ASSIGNED to
+    // (`assignedTo` array contains them). Skipped when the request already
+    // filters by an explicit `user` (e.g. a coach viewing a specific
+    // client's tasks via ?user=<id>), so that override keeps working.
+    ownedOrAssignedToCurrentUser?: boolean;
     additionalFilter?: object;
     publicTypeFilter?: boolean;
     coachTypeFilter?: boolean;
@@ -128,10 +133,30 @@ export const getAll = <T = any>(Model: Model<T>, options?: GetAllOptions) =>
             filter = { ...filter, user: req.user._id };
         }
 
-        if (options?.publicTypeFilter && req.user) {
+        if (
+            options?.ownedOrAssignedToCurrentUser &&
+            req.user &&
+            !req.query.user
+        ) {
             filter = {
                 ...filter,
-                $or: [{ public: true }, { user: req.user._id }],
+                $or: [
+                    { user: req.user._id },
+                    { assignedTo: req.user._id },
+                ],
+            };
+        }
+
+        if (options?.publicTypeFilter && req.user) {
+            // System docs are public AND owned by nobody (user: null); a
+            // user's own public doc must NOT leak to others, so only the
+            // {user: me} branch surfaces those.
+            filter = {
+                ...filter,
+                $or: [
+                    { public: true, user: null },
+                    { user: req.user._id },
+                ],
             };
         }
 
@@ -179,17 +204,41 @@ export const getAllUnpaginated = <T = any>(
             filter = { ...filter, user: req.user._id };
         }
 
-        if (options?.publicTypeFilter && req.user) {
+        if (
+            options?.ownedOrAssignedToCurrentUser &&
+            req.user &&
+            !req.query.user
+        ) {
             filter = {
                 ...filter,
-                $or: [{ public: true }, { user: req.user._id }],
+                $or: [
+                    { user: req.user._id },
+                    { assignedTo: req.user._id },
+                ],
+            };
+        }
+
+        if (options?.publicTypeFilter && req.user) {
+            // System docs are public AND owned by nobody (user: null); a
+            // user's own public doc must NOT leak to others, so only the
+            // {user: me} branch surfaces those.
+            filter = {
+                ...filter,
+                $or: [
+                    { public: true, user: null },
+                    { user: req.user._id },
+                ],
             };
         }
 
         if (options?.coachTypeFilter && req.params?.userId) {
+            // System docs (public + user: null) plus the viewed client's own.
             filter = {
                 ...filter,
-                $or: [{ public: true }, { user: req.params?.userId }],
+                $or: [
+                    { public: true, user: null },
+                    { user: req.params?.userId },
+                ],
             };
         }
 

@@ -111,6 +111,71 @@ export const getUserById = catchAsync(
     },
 );
 
+// GET /api/v1/user/me
+// Returns the current user with their full coaching hierarchy FLATTENED onto
+// `assignedCoach`: the user's assigned coaches → each coach's managers → each
+// manager's admin, all in a single 1D array (each entry keeps its `role`, no
+// nesting). The chain lives on the `assignedCoach` field at every level, so we
+// deep-populate three levels and then flatten breadth-first (coaches, then
+// managers, then admins). Sensitive fields are stripped from populated docs.
+export const getMe = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const HIERARCHY_SELECT =
+            "-password -otp -otpExpires -passwordResetToken -passwordResetExpires -__v -fcmTokens";
+
+        const user = await UserModel.findById(req.user._id)
+            .populate({
+                path: "sharedViewers",
+                select: HIERARCHY_SELECT,
+            })
+            .populate({
+                path: "assignedCoach", // the user's coaches
+                select: HIERARCHY_SELECT,
+                populate: {
+                    path: "assignedCoach", // each coach's managers
+                    select: HIERARCHY_SELECT,
+                    populate: {
+                        path: "assignedCoach", // each manager's admin
+                        select: HIERARCHY_SELECT,
+                    },
+                },
+            })
+            .lean();
+
+        if (!user) {
+            return next(new AppError("User not found", 404));
+        }
+
+        // Flatten the nested coach→manager→admin tree into one deduplicated
+        // array, level by level, stripping each node's own `assignedCoach`.
+        const flattenHierarchy = (roots: any): any[] => {
+            const flat: any[] = [];
+            const seen = new Set<string>();
+            let level: any[] = Array.isArray(roots) ? [...roots] : [];
+
+            while (level.length) {
+                const nextLevel: any[] = [];
+                for (const node of level) {
+                    if (!node || !node._id) continue;
+                    const { assignedCoach: children, ...rest } = node;
+                    const id = String(node._id);
+                    if (!seen.has(id)) {
+                        seen.add(id);
+                        flat.push(rest);
+                    }
+                    if (Array.isArray(children)) nextLevel.push(...children);
+                }
+                level = nextLevel;
+            }
+            return flat;
+        };
+
+        user.assignedCoach = flattenHierarchy(user.assignedCoach) as any;
+
+        sendResponse(res, 200, "User retrieved successfully", user);
+    },
+);
+
 export const suggestUsers = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const currentUser = req.user;
@@ -433,6 +498,35 @@ type Role = "admin" | "manager" | "coach" | "user";
 const normalizeIds = (ids: string[]) =>
     ids.map((id) => mongoose.Types.ObjectId.createFromHexString(id));
 
+// Roles that get a direct chat with EVERYONE (staff). A regular "user" only
+// gets a direct chat with each staff member.
+const STAFF_ROLES = ["admin", "manager", "coach"];
+
+// Ensure the "staff talks to everyone" invariant for a person whose role was
+// just set (created, upgraded, or downgraded):
+//   - staff (admin/manager/coach) -> direct chat with every active user
+//   - regular user                -> direct chat with every active staff member
+// createDirectChatIfNotExists is idempotent, so this never duplicates chats
+// and is safe to re-run on role changes.
+async function ensureRoleChatrooms(
+    personId: mongoose.Types.ObjectId,
+    personRole: string,
+    createdBy: mongoose.Types.ObjectId,
+) {
+    const isStaff = STAFF_ROLES.includes(personRole);
+    const counterparts = await UserModel.find(
+        isStaff
+            ? { active: true, _id: { $ne: personId } }
+            : { active: true, role: { $in: STAFF_ROLES } },
+    ).select("_id");
+
+    await Promise.all(
+        counterparts.map((u) =>
+            createDirectChatIfNotExists(personId, u._id, createdBy),
+        ),
+    );
+}
+
 export const createUserByHierarchy = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const requesterId = req.user?._id;
@@ -638,6 +732,11 @@ export const createUserByHierarchy = catchAsync(
             console.warn("Failed to send welcome email:", err);
         }
 
+        // ✅ Admins never carry a "managed by" assignment.
+        if (role === "admin") {
+            finalAssignedCoach = [];
+        }
+
         // ✅ Create user
         const created = await UserModel.create({
             fullName,
@@ -661,37 +760,9 @@ export const createUserByHierarchy = catchAsync(
             );
         }
 
-        if (role === "admin") {
-            // New admin → create direct chats with all existing users
-            const allUsers = await UserModel.find({
-                active: true,
-                _id: { $ne: created._id },
-            }).select("_id");
-            await Promise.all(
-                allUsers.map((user) =>
-                    createDirectChatIfNotExists(
-                        created._id,
-                        user._id,
-                        requesterId,
-                    ),
-                ),
-            );
-        } else {
-            // Non-admin → create direct chats with all admins
-            const admins = await UserModel.find({
-                role: "admin",
-                active: true,
-            }).select("_id");
-            await Promise.all(
-                admins.map((admin) =>
-                    createDirectChatIfNotExists(
-                        created._id,
-                        admin._id,
-                        requesterId,
-                    ),
-                ),
-            );
-        }
+        // Staff (admin/manager/coach) get chats with everyone; a regular user
+        // gets chats with all staff.
+        await ensureRoleChatrooms(created._id, role, requesterId);
 
         sendResponse(res, 201, "User created successfully", created);
     },
@@ -947,6 +1018,14 @@ export const updateUserByHierarchy = catchAsync(
             }
         }
 
+        // ✅ Admins never carry a "managed by" assignment. Force-clear any
+        // carried-over assignedCoach whenever the resulting role is admin —
+        // this covers upgrades to admin (the assignment block above has no
+        // admin-target branch) and edits of existing admins alike.
+        if (targetUser.role === "admin") {
+            targetUser.assignedCoach = [];
+        }
+
         // ✅ Save
         await targetUser.save();
 
@@ -967,39 +1046,15 @@ export const updateUserByHierarchy = catchAsync(
             );
         }
 
-        // On role change, ensure admin chatrooms exist
+        // On role change, ensure the right chatrooms exist: a user upgraded to
+        // staff (admin/manager/coach) gets chats with everyone; a downgrade to
+        // user gets chats with all staff.
         if (role && role !== previousRole) {
-            if (role === "admin") {
-                // Became admin → create chats with all users (including other admins)
-                const allUsers = await UserModel.find({
-                    active: true,
-                    _id: { $ne: targetUser._id },
-                }).select("_id");
-                await Promise.all(
-                    allUsers.map((user) =>
-                        createDirectChatIfNotExists(
-                            targetUser._id,
-                            user._id,
-                            requesterId,
-                        ),
-                    ),
-                );
-            } else {
-                // Role changed to non-admin → ensure chats with all admins
-                const admins = await UserModel.find({
-                    role: "admin",
-                    active: true,
-                }).select("_id");
-                await Promise.all(
-                    admins.map((admin) =>
-                        createDirectChatIfNotExists(
-                            targetUser._id,
-                            admin._id,
-                            requesterId,
-                        ),
-                    ),
-                );
-            }
+            await ensureRoleChatrooms(
+                targetUser._id,
+                targetUser.role,
+                requesterId,
+            );
         }
 
         sendResponse(res, 200, "User updated successfully", updated);

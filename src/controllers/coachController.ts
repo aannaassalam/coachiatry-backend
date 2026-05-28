@@ -8,7 +8,10 @@ export const getClients = catchAsync(
         const currentUserId = req.user._id;
         const clients = await UserModel.find({
             assignedCoach: currentUserId,
-        });
+        })
+            // A→Z by name, case-insensitive (so "alice" and "Bob" order naturally)
+            .collation({ locale: "en", strength: 2 })
+            .sort({ fullName: 1 });
         sendResponse(res, 200, "Clients fetched successfully", clients);
-    }
+    },
 );

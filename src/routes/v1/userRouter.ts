@@ -11,6 +11,7 @@ import {
     deleteUserSoft,
     getAllUsers,
     getAllWatching,
+    getMe,
     getUserById,
     getUsers,
     getUsersById,
@@ -26,7 +27,7 @@ router.use(protect);
 
 router
     .route("/me")
-    .get(injectUserId, factory.getOne(UserModel))
+    .get(getMe)
     .patch(injectUserId, validateUserUpdate, factory.updateOne(UserModel));
 
 router.patch(

@@ -72,10 +72,12 @@ export const importTasks = catchAsync(
             return importBulkTasks(req, res, next);
         }
 
+        // Prefer the SYSTEM Todo column (public + user: null). Fall back to
+        // the user's own Todo if a personal one already exists.
         const existing = await StatusModel.findOne({
             title: { $in: ["To Do", "Todo"] },
             active: true,
-            public: true,
+            $or: [{ public: true, user: null }, { user: userId }],
         })
             .select("_id")
             .lean();
@@ -83,12 +85,14 @@ export const importTasks = catchAsync(
         const todoId = existing
             ? String(existing._id)
             : String(
+                  // No system/personal Todo found — create a PERSONAL one
+                  // (not public) so it never leaks onto other users' boards.
                   (
                       await StatusModel.create({
                           title: "Todo",
                           user: userId,
                           active: true,
-                          public: true,
+                          public: false,
                           color: { bg: "#f3f4f6", text: "#374151" },
                       })
                   )._id
