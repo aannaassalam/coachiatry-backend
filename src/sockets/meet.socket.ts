@@ -45,11 +45,19 @@ export default (_nsp: Namespace, socket: AuthedSocket) => {
                 return ack?.({ ok: false, error: "meetingId required" });
 
             const userId = socket.data.userId;
-            const existing = await TranscriptionModel.findOne({
-                user: userId,
-                meetingId,
-                source: "extension",
-            }).select("_id");
+            // Re-recording the same meeting: reuse the existing transcription
+            // and flip it back to active. A prior meeting/end sets active:false,
+            // so without this a resumed session stays inactive and task
+            // generation ("current meeting only") would 404.
+            const existing = await TranscriptionModel.findOneAndUpdate(
+                {
+                    user: userId,
+                    meetingId,
+                    source: "extension",
+                },
+                { active: true },
+                { new: true }
+            ).select("_id");
 
             if (existing) {
                 socket.data.transcriptionIdByMeeting![meetingId] =
