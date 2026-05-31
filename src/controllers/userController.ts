@@ -8,7 +8,10 @@ import ChatModel from "../model/chatModel";
 import mongoose from "mongoose";
 import crypto from "crypto";
 import { sendEmail } from "../utils/email_sms";
-import { WELCOME_EMAIL_HTML_WITH_PASSWORD } from "../constants/constants";
+import {
+    WELCOME_EMAIL_HTML_WITH_PASSWORD,
+    WATCHER_INVITE_HTML,
+} from "../constants/constants";
 import { createDirectChatIfNotExists } from "./chatController";
 
 // Initialize S3 client
@@ -176,39 +179,174 @@ export const getMe = catchAsync(
     },
 );
 
+// Collect everyone ABOVE a user (their coach -> manager -> admin chain).
+// Walks UP the assignedCoach graph starting from the given user.
+async function getManagementTreeIds(userId: any) {
+    const result = await UserModel.aggregate([
+        { $match: { _id: new mongoose.Types.ObjectId(userId) } },
+        {
+            $graphLookup: {
+                from: "users",
+                startWith: "$assignedCoach",
+                connectFromField: "assignedCoach",
+                connectToField: "_id",
+                as: "managementTree",
+                maxDepth: 10,
+            },
+        },
+        { $project: { treeIds: "$managementTree._id" } },
+    ]);
+    return result?.[0]?.treeIds || [];
+}
+
 export const suggestUsers = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const currentUser = req.user;
-        const { search = "", type = "group" } = req.query;
+        const { search = "", type = "group", exclude = [] } = req.query as any;
 
-        const allowedUsers: string[] = [
-            ...currentUser.sharedViewers.map(String),
-            ...(currentUser.assignedCoach ?? []).map(String),
-        ];
+        // ids the caller already has in the group (or otherwise wants hidden)
+        const excludeIds = (Array.isArray(exclude) ? exclude : [exclude])
+            .filter(Boolean)
+            .map(String);
+
+        const searchMatch = {
+            $or: [
+                { fullName: { $regex: search, $options: "i" } },
+                { email: { $regex: search, $options: "i" } },
+            ],
+        };
 
         if (type === "group") {
-            const users = await UserModel.find({
-                _id: { $in: allowedUsers, $ne: currentUser?._id },
+            const baseFilter: any = {
                 active: true,
                 verified: true,
-                email: { $regex: search, $options: "i" },
-            })
+                _id: { $ne: currentUser?._id, $nin: excludeIds },
+                ...searchMatch,
+            };
+
+            const role = currentUser.role;
+
+            // Admin / manager / coach can add ANYONE in the system. A regular
+            // user is restricted to their own management tree (their coaches,
+            // those coaches' managers, and the admins above) plus their
+            // watchers — all flattened into one list.
+            if (role === "user") {
+                const managementTree = await getManagementTreeIds(
+                    currentUser._id,
+                );
+                const allowed = [
+                    ...managementTree.map(String),
+                    ...currentUser.sharedViewers.map(String),
+                ];
+                baseFilter._id = {
+                    $in: allowed,
+                    $ne: currentUser?._id,
+                    $nin: excludeIds,
+                };
+            }
+
+            const users = await UserModel.find(baseFilter)
                 .select(["fullName", "photo", "email", "role"])
-                .limit(5);
+                .limit(10);
 
             sendResponse(res, 200, "Suggestions fetched", users);
         } else {
+            const allowedUsers: string[] = [
+                ...currentUser.sharedViewers.map(String),
+                ...(currentUser.assignedCoach ?? []).map(String),
+            ];
+
             const users = await UserModel.find({
-                _id: { $ne: currentUser?._id, $nin: allowedUsers },
+                _id: {
+                    $ne: currentUser?._id,
+                    $nin: [...allowedUsers, ...excludeIds],
+                },
                 active: true,
                 verified: true,
-                email: { $regex: search, $options: "i" },
+                ...searchMatch,
             })
                 .select(["fullName", "photo", "email", "role"])
-                .limit(5);
+                .limit(10);
 
             sendResponse(res, 200, "Suggestions fetched", users);
         }
+    },
+);
+
+// Exact-email lookup used by the "Add Watchers" flow.
+export const findWatcherByEmail = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const currentUser = req.user;
+        const email = String(req.query.email || "")
+            .trim()
+            .toLowerCase();
+
+        if (!email) {
+            return next(new AppError("Email is required", 400));
+        }
+
+        const user = await UserModel.findOne({
+            email,
+            active: true,
+            verified: true,
+        }).select(["fullName", "photo", "email", "role"]);
+
+        if (!user) {
+            return sendResponse(res, 200, "No user found", { found: false });
+        }
+
+        if (user._id.toString() === currentUser._id.toString()) {
+            return sendResponse(res, 200, "That is you", {
+                found: false,
+                isSelf: true,
+            });
+        }
+
+        const alreadyWatcher = currentUser.sharedViewers
+            .map(String)
+            .includes(user._id.toString());
+
+        return sendResponse(res, 200, "User found", {
+            found: true,
+            alreadyWatcher,
+            user,
+        });
+    },
+);
+
+// Email a share link to people who don't have an account yet.
+export const inviteWatchersByEmail = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const currentUser = req.user;
+        const { emails } = req.body;
+
+        if (!Array.isArray(emails) || emails.length === 0) {
+            return next(new AppError("No emails provided", 400));
+        }
+
+        const link = `${process.env.CLIENT_URL}/share/user/${currentUser.shareId}`;
+
+        const normalized = [
+            ...new Set(
+                emails
+                    .map((e: string) => String(e).trim().toLowerCase())
+                    .filter(Boolean),
+            ),
+        ];
+
+        await Promise.all(
+            normalized.map((email) =>
+                sendEmail({
+                    email,
+                    subject: `${currentUser.fullName} invited you to Coachiatry`,
+                    html: WATCHER_INVITE_HTML(currentUser.fullName, link),
+                }).catch((err) => {
+                    console.error(`Failed to send invite to ${email}:`, err);
+                }),
+            ),
+        );
+
+        sendResponse(res, 200, "Invitations sent successfully!", null);
     },
 );
 

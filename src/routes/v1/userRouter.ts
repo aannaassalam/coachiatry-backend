@@ -17,6 +17,8 @@ import {
     getUsersById,
     revokeViewerAccess,
     suggestUsers,
+    findWatcherByEmail,
+    inviteWatchersByEmail,
     updateProfilePicture,
     updateUserByHierarchy,
 } from "../../controllers/userController";
@@ -37,6 +39,8 @@ router.patch(
 );
 
 router.get("/suggestions", suggestUsers);
+router.get("/find-watcher-by-email", findWatcherByEmail);
+router.post("/invite-watchers", inviteWatchersByEmail);
 router.get("/user-by-ids", getUsersById);
 router.get("/user-by-id/:userId", getUserById);
 router.post("/add-watchers", addWatchersById);

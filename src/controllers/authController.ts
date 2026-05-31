@@ -143,16 +143,16 @@ export const signup = catchAsync(
             isDeletable: false,
         });
 
-        // Create direct chats with all admins
-        const admins = await UserModel.find({
-            role: "admin",
+        // Create direct chats with all staff (admins, managers, coaches)
+        const staff = await UserModel.find({
+            role: { $in: ["admin", "manager", "coach"] },
             active: true,
         }).select("_id");
         await Promise.all(
-            admins.map((admin) =>
+            staff.map((member) =>
                 createDirectChatIfNotExists(
                     newUser._id,
-                    admin._id,
+                    member._id,
                     newUser._id,
                 ),
             ),
@@ -271,14 +271,14 @@ export const googleAuth = catchAsync(
                 isDeletable: false,
             });
 
-            // Create direct chats with all admins
-            const admins = await UserModel.find({
-                role: "admin",
+            // Create direct chats with all staff (admins, managers, coaches)
+            const staff = await UserModel.find({
+                role: { $in: ["admin", "manager", "coach"] },
                 active: true,
             }).select("_id");
             await Promise.all(
-                admins.map((admin) =>
-                    createDirectChatIfNotExists(user._id, admin._id, user._id),
+                staff.map((member) =>
+                    createDirectChatIfNotExists(user._id, member._id, user._id),
                 ),
             );
         }
