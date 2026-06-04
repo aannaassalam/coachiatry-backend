@@ -247,20 +247,20 @@ export const getAllConversations = catchAsync(
                         {
                             $addFields: {
                                 members: {
-                                    // Drop members whose referenced user no
-                                    // longer exists (orphaned refs resolve to
-                                    // null in the $map below).
-                                    $filter: {
-                                        input: {
-                                            $map: {
-                                                input: "$members",
-                                                as: "m",
-                                                in: {
-                                                    role: "$$m.role",
-                                                    joinedAt: "$$m.joinedAt",
-                                                    lastReadAt:
-                                                        "$$m.lastReadAt",
-                                                    user: {
+                                    $map: {
+                                        input: "$members",
+                                        as: "m",
+                                        in: {
+                                            role: "$$m.role",
+                                            joinedAt: "$$m.joinedAt",
+                                            lastReadAt: "$$m.lastReadAt",
+                                            // Substitute a placeholder when the
+                                            // referenced user no longer exists
+                                            // so the chat still renders
+                                            // ("Deleted user") not crashes.
+                                            user: {
+                                                $ifNull: [
+                                                    {
                                                         $arrayElemAt: [
                                                             {
                                                                 $filter: {
@@ -277,11 +277,15 @@ export const getAllConversations = catchAsync(
                                                             0,
                                                         ],
                                                     },
-                                                },
+                                                    {
+                                                        _id: "$$m.user",
+                                                        fullName: "Deleted user",
+                                                        photo: null,
+                                                        deleted: true,
+                                                    },
+                                                ],
                                             },
                                         },
-                                        as: "mm",
-                                        cond: { $ne: ["$$mm.user", null] },
                                     },
                                 },
                             },
@@ -369,18 +373,19 @@ export const getConversation = catchAsync(
             {
                 $addFields: {
                     members: {
-                        // Drop members whose referenced user no longer exists
-                        // (orphaned refs resolve to null in the $map below).
-                        $filter: {
-                            input: {
-                                $map: {
-                                    input: "$members",
-                                    as: "m",
-                                    in: {
-                                        role: "$$m.role",
-                                        joinedAt: "$$m.joinedAt",
-                                        lastReadAt: "$$m.lastReadAt",
-                                        user: {
+                        $map: {
+                            input: "$members",
+                            as: "m",
+                            in: {
+                                role: "$$m.role",
+                                joinedAt: "$$m.joinedAt",
+                                lastReadAt: "$$m.lastReadAt",
+                                // Substitute a placeholder when the referenced
+                                // user no longer exists so the chat still
+                                // renders ("Deleted user") instead of crashing.
+                                user: {
+                                    $ifNull: [
+                                        {
                                             $arrayElemAt: [
                                                 {
                                                     $filter: {
@@ -397,11 +402,15 @@ export const getConversation = catchAsync(
                                                 0,
                                             ],
                                         },
-                                    },
+                                        {
+                                            _id: "$$m.user",
+                                            fullName: "Deleted user",
+                                            photo: null,
+                                            deleted: true,
+                                        },
+                                    ],
                                 },
                             },
-                            as: "mm",
-                            cond: { $ne: ["$$mm.user", null] },
                         },
                     },
                 },
@@ -581,20 +590,20 @@ export const getAllConversationsByCoach = catchAsync(
                         {
                             $addFields: {
                                 members: {
-                                    // Drop members whose referenced user no
-                                    // longer exists (orphaned refs resolve to
-                                    // null in the $map below).
-                                    $filter: {
-                                        input: {
-                                            $map: {
-                                                input: "$members",
-                                                as: "m",
-                                                in: {
-                                                    role: "$$m.role",
-                                                    joinedAt: "$$m.joinedAt",
-                                                    lastReadAt:
-                                                        "$$m.lastReadAt",
-                                                    user: {
+                                    $map: {
+                                        input: "$members",
+                                        as: "m",
+                                        in: {
+                                            role: "$$m.role",
+                                            joinedAt: "$$m.joinedAt",
+                                            lastReadAt: "$$m.lastReadAt",
+                                            // Substitute a placeholder when the
+                                            // referenced user no longer exists
+                                            // so the chat still renders
+                                            // ("Deleted user") not crashes.
+                                            user: {
+                                                $ifNull: [
+                                                    {
                                                         $arrayElemAt: [
                                                             {
                                                                 $filter: {
@@ -611,11 +620,15 @@ export const getAllConversationsByCoach = catchAsync(
                                                             0,
                                                         ],
                                                     },
-                                                },
+                                                    {
+                                                        _id: "$$m.user",
+                                                        fullName: "Deleted user",
+                                                        photo: null,
+                                                        deleted: true,
+                                                    },
+                                                ],
                                             },
                                         },
-                                        as: "mm",
-                                        cond: { $ne: ["$$mm.user", null] },
                                     },
                                 },
                             },
