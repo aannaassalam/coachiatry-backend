@@ -247,31 +247,41 @@ export const getAllConversations = catchAsync(
                         {
                             $addFields: {
                                 members: {
-                                    $map: {
-                                        input: "$members",
-                                        as: "m",
-                                        in: {
-                                            role: "$$m.role",
-                                            joinedAt: "$$m.joinedAt",
-                                            lastReadAt: "$$m.lastReadAt",
-                                            user: {
-                                                $arrayElemAt: [
-                                                    {
-                                                        $filter: {
-                                                            input: "$memberUsers",
-                                                            as: "u",
-                                                            cond: {
-                                                                $eq: [
-                                                                    "$$u._id",
-                                                                    "$$m.user",
-                                                                ],
+                                    // Drop members whose referenced user no
+                                    // longer exists (orphaned refs resolve to
+                                    // null in the $map below).
+                                    $filter: {
+                                        input: {
+                                            $map: {
+                                                input: "$members",
+                                                as: "m",
+                                                in: {
+                                                    role: "$$m.role",
+                                                    joinedAt: "$$m.joinedAt",
+                                                    lastReadAt:
+                                                        "$$m.lastReadAt",
+                                                    user: {
+                                                        $arrayElemAt: [
+                                                            {
+                                                                $filter: {
+                                                                    input: "$memberUsers",
+                                                                    as: "u",
+                                                                    cond: {
+                                                                        $eq: [
+                                                                            "$$u._id",
+                                                                            "$$m.user",
+                                                                        ],
+                                                                    },
+                                                                },
                                                             },
-                                                        },
+                                                            0,
+                                                        ],
                                                     },
-                                                    0,
-                                                ],
+                                                },
                                             },
                                         },
+                                        as: "mm",
+                                        cond: { $ne: ["$$mm.user", null] },
                                     },
                                 },
                             },
@@ -359,31 +369,39 @@ export const getConversation = catchAsync(
             {
                 $addFields: {
                     members: {
-                        $map: {
-                            input: "$members",
-                            as: "m",
-                            in: {
-                                role: "$$m.role",
-                                joinedAt: "$$m.joinedAt",
-                                lastReadAt: "$$m.lastReadAt",
-                                user: {
-                                    $arrayElemAt: [
-                                        {
-                                            $filter: {
-                                                input: "$memberUsers",
-                                                as: "u",
-                                                cond: {
-                                                    $eq: [
-                                                        "$$u._id",
-                                                        "$$m.user",
-                                                    ],
+                        // Drop members whose referenced user no longer exists
+                        // (orphaned refs resolve to null in the $map below).
+                        $filter: {
+                            input: {
+                                $map: {
+                                    input: "$members",
+                                    as: "m",
+                                    in: {
+                                        role: "$$m.role",
+                                        joinedAt: "$$m.joinedAt",
+                                        lastReadAt: "$$m.lastReadAt",
+                                        user: {
+                                            $arrayElemAt: [
+                                                {
+                                                    $filter: {
+                                                        input: "$memberUsers",
+                                                        as: "u",
+                                                        cond: {
+                                                            $eq: [
+                                                                "$$u._id",
+                                                                "$$m.user",
+                                                            ],
+                                                        },
+                                                    },
                                                 },
-                                            },
+                                                0,
+                                            ],
                                         },
-                                        0,
-                                    ],
+                                    },
                                 },
                             },
+                            as: "mm",
+                            cond: { $ne: ["$$mm.user", null] },
                         },
                     },
                 },
@@ -563,31 +581,41 @@ export const getAllConversationsByCoach = catchAsync(
                         {
                             $addFields: {
                                 members: {
-                                    $map: {
-                                        input: "$members",
-                                        as: "m",
-                                        in: {
-                                            role: "$$m.role",
-                                            joinedAt: "$$m.joinedAt",
-                                            lastReadAt: "$$m.lastReadAt",
-                                            user: {
-                                                $arrayElemAt: [
-                                                    {
-                                                        $filter: {
-                                                            input: "$memberUsers",
-                                                            as: "u",
-                                                            cond: {
-                                                                $eq: [
-                                                                    "$$u._id",
-                                                                    "$$m.user",
-                                                                ],
+                                    // Drop members whose referenced user no
+                                    // longer exists (orphaned refs resolve to
+                                    // null in the $map below).
+                                    $filter: {
+                                        input: {
+                                            $map: {
+                                                input: "$members",
+                                                as: "m",
+                                                in: {
+                                                    role: "$$m.role",
+                                                    joinedAt: "$$m.joinedAt",
+                                                    lastReadAt:
+                                                        "$$m.lastReadAt",
+                                                    user: {
+                                                        $arrayElemAt: [
+                                                            {
+                                                                $filter: {
+                                                                    input: "$memberUsers",
+                                                                    as: "u",
+                                                                    cond: {
+                                                                        $eq: [
+                                                                            "$$u._id",
+                                                                            "$$m.user",
+                                                                        ],
+                                                                    },
+                                                                },
                                                             },
-                                                        },
+                                                            0,
+                                                        ],
                                                     },
-                                                    0,
-                                                ],
+                                                },
                                             },
                                         },
+                                        as: "mm",
+                                        cond: { $ne: ["$$mm.user", null] },
                                     },
                                 },
                             },
