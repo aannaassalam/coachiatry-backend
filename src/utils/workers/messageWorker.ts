@@ -72,7 +72,9 @@ export const messageWorker = new Worker(
             chatId: template.chat.toString(),
             senderId: template.sender.toString(),
             message: template,
-        });
+        }).catch((err) =>
+            console.error("[push] scheduled notification failed:", err),
+        );
         io?.to(String(template.chat)).emit("new_message", sentMessage);
     },
     { connection: redisConnection },

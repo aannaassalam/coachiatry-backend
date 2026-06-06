@@ -5,6 +5,7 @@ import ChatModel from "../../model/chatModel";
 import { validateDocumentUpdate } from "../../utils/validator";
 import * as factory from "./../../controllers/handleFactory";
 import {
+    acceptGroupInvite,
     chatPartUrls,
     chatUploadComplete,
     createGroup,
@@ -12,6 +13,8 @@ import {
     getAllConversations,
     getAllConversationsByCoach,
     getConversation,
+    getGroupInvite,
+    inviteToGroupByEmail,
     leaveGroup,
     startChatMultipartUpload,
 } from "../../controllers/chatController";
@@ -41,6 +44,12 @@ router.post("/group", upload.single("groupPhoto"), createGroup);
 router.post("/group/edit", upload.single("groupPhoto"), editGroup);
 router.delete("/leave-group/:chatId", leaveGroup);
 
+// Group invites by email (owner sends; invitee fetches/accepts after auth).
+router.post("/group/invite", inviteToGroupByEmail);
+router.get("/group/invite/:token", getGroupInvite);
+router.post("/group/invite/:token/accept", acceptGroupInvite);
+
+// Keep this LAST — it's a catch-all that would otherwise swallow /group/* paths.
 router.get("/:roomId", getConversation);
 
 export default router;

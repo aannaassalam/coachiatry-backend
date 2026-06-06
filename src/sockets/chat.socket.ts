@@ -220,12 +220,15 @@ export default (io: Server, socket: Socket) => {
                 }
             }
 
-            // Send push notification
+            // Send push notification (fire-and-forget, but never let a
+            // rejection become an unhandled promise rejection).
             sendMessageNotification({
                 chatId: chatIdStr,
                 senderId,
                 message: populatedMessage,
-            });
+            }).catch((err) =>
+                console.error("[push] notification failed:", err),
+            );
 
             // Acknowledge success to the sender
             if (typeof callback === "function") {

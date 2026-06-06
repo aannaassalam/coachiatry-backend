@@ -103,50 +103,87 @@ export const sendMessageNotification = async ({
     //   - iOS: APNS alert + mutableContent so the system renders the
     //     notification and the NSE attaches the avatar. No duplicate because
     //     iOS doesn't render notifee output while the APNS alert is showing.
-    const response = await admin.messaging().sendEachForMulticast({
-        tokens: deviceTokens,
-        data,
-        android: {
-            priority: "high",
-            collapseKey: `chat-${chatId.toString()}`,
-        },
-        apns: {
-            headers: {
-                "apns-priority": "10",
-                "apns-push-type": "alert",
+    let response;
+    try {
+        response = await admin.messaging().sendEachForMulticast({
+            tokens: deviceTokens,
+            data,
+            android: {
+                priority: "high",
+                collapseKey: `chat-${chatId.toString()}`,
             },
-            payload: {
-                aps: {
-                    alert: {
-                        title: chatName,
-                        body: isGroup ? `${senderName}: ${body}` : body,
+            apns: {
+                headers: {
+                    "apns-priority": "10",
+                    "apns-push-type": "alert",
+                },
+                payload: {
+                    aps: {
+                        alert: {
+                            title: chatName,
+                            body: isGroup ? `${senderName}: ${body}` : body,
+                        },
+                        sound: "default",
+                        threadId: chatId.toString(),
+                        mutableContent: true,
+                        category: "chat-message",
                     },
-                    sound: "default",
-                    threadId: chatId.toString(),
-                    mutableContent: true,
-                    category: "chat-message",
                 },
             },
-        },
-        // Web: pure data message. The service worker's onBackgroundMessage
-        // composes the notification, matching the Android approach and
-        // keeping the same `data` payload across all three platforms.
-        webpush: {
-            headers: {
-                Urgency: "high",
-                TTL: "86400",
+            // Web: pure data message. The service worker's onBackgroundMessage
+            // composes the notification, matching the Android approach and
+            // keeping the same `data` payload across all three platforms.
+            webpush: {
+                headers: {
+                    Urgency: "high",
+                    TTL: "86400",
+                },
             },
-        },
+        });
+    } catch (err) {
+        // Whole multicast failed (network/credentials/quota). Never prune
+        // tokens here — the failure isn't token-specific.
+        console.error(
+            `[push] sendEachForMulticast threw for chat ${chatId} (${deviceTokens.length} tokens):`,
+            err,
+        );
+        return;
+    }
+
+    // Only prune tokens FCM explicitly reports as permanently invalid.
+    // Transient errors (internal-error, server-unavailable, quota, timeouts)
+    // must NOT delete a still-valid token — doing so is the main cause of
+    // notifications silently stopping for a device.
+    const DEAD_TOKEN_CODES = new Set([
+        "messaging/registration-token-not-registered",
+        "messaging/invalid-registration-token",
+        "messaging/invalid-argument",
+    ]);
+
+    const deadTokens: string[] = [];
+    let transientFailures = 0;
+    response.responses.forEach((resp, idx) => {
+        if (resp.success) return;
+        const code = resp.error?.code || "unknown";
+        if (DEAD_TOKEN_CODES.has(code)) {
+            deadTokens.push(deviceTokens[idx]);
+        } else {
+            transientFailures += 1;
+            console.warn(
+                `[push] transient send failure (token kept) chat ${chatId}: ${code}`,
+            );
+        }
     });
 
-    const failedTokens: string[] = [];
-    response.responses.forEach((resp, idx) => {
-        if (!resp.success) failedTokens.push(deviceTokens[idx]);
-    });
-    if (failedTokens.length > 0) {
+    console.log(
+        `[push] chat ${chatId}: ${response.successCount}/${deviceTokens.length} sent, ` +
+            `${deadTokens.length} dead, ${transientFailures} transient`,
+    );
+
+    if (deadTokens.length > 0) {
         await UserModel.updateMany(
-            { fcmTokens: { $in: failedTokens } },
-            { $pull: { fcmTokens: { $in: failedTokens } } }
+            { fcmTokens: { $in: deadTokens } },
+            { $pull: { fcmTokens: { $in: deadTokens } } },
         );
     }
 };

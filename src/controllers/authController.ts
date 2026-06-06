@@ -16,7 +16,10 @@ import {
     WELCOME_EMAIL_HTML,
 } from "../constants/constants";
 import ChatModel from "../model/chatModel";
-import { createDirectChatIfNotExists } from "./chatController";
+import {
+    createDirectChatIfNotExists,
+    processPendingGroupInvitesForUser,
+} from "./chatController";
 import moment from "moment";
 // import sendEmail from '../utils/email_sms'; // Uncomment and implement as needed
 
@@ -208,6 +211,14 @@ export const login = catchAsync(
                     StatusCodes.BAD_REQUEST,
                 ),
             );
+
+        // Auto-join any groups this email was invited to (safety net alongside
+        // the /group-invite landing page).
+        await processPendingGroupInvitesForUser({
+            _id: user._id,
+            email: user.email,
+        });
+
         createSendToken(
             user,
             StatusCodes.OK,
@@ -282,6 +293,13 @@ export const googleAuth = catchAsync(
                 ),
             );
         }
+
+        // Auto-join any groups this email was invited to (covers a brand-new
+        // Google user whose email had a pending invite).
+        await processPendingGroupInvitesForUser({
+            _id: user._id,
+            email: user.email,
+        });
 
         delete user.password;
 
@@ -427,6 +445,12 @@ export const verifyOtp = catchAsync(
         user.verified = true;
 
         await user.save({ validateBeforeSave: false });
+
+        // Auto-join any groups this email was invited to before signup.
+        await processPendingGroupInvitesForUser({
+            _id: user._id,
+            email: user.email,
+        });
 
         try {
             await sendEmail({

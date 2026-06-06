@@ -57,7 +57,9 @@ export const taskWorker = new Worker(
             chatId: sentMessage.chat.toString(),
             senderId: sentMessage.sender.toString(),
             message: sentMessage,
-        });
+        }).catch((err) =>
+            console.error("[push] task reminder notification failed:", err),
+        );
         io.to(String(chat._id)).emit("new_message", sentMessage);
     },
     { connection: redisConnection }

@@ -270,6 +270,49 @@ export const WELCOME_EMAIL_HTML_WITH_PASSWORD = (
    `;
 };
 
+export const GROUP_INVITE_HTML = (
+    inviterName: string,
+    groupName: string,
+    link: string,
+    isNewUser: boolean
+) => {
+    const cta = isNewUser ? "Sign up & join" : "Join the group";
+    const helper = isNewUser
+        ? "You'll be asked to create an account, then you'll join the group automatically."
+        : "Log in to join the group automatically.";
+    return `
+   <div style="font-family: 'Segoe UI', Arial, sans-serif; background: #f7f7f9; padding: 32px;">
+      <div style="max-width: 480px; margin: auto; background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.07); padding: 32px;">
+         <div style="text-align: center; margin-bottom: 24px;">
+            <img src="https://coachiatry.s3.us-east-1.amazonaws.com/logo.svg" alt="Coachiatry Logo" style="height: 48px; margin-bottom: 8px;" />
+            <h2 style="color: #1e88e5; margin: 0;">You're invited to a group</h2>
+         </div>
+         <p style="font-size: 16px; color: #222;">Hi there,</p>
+         <p style="font-size: 15px; color: #444; line-height: 1.6;">
+            <strong>${inviterName}</strong> has invited you to join the group
+            <strong>"${groupName}"</strong> on <strong>Coachiatry</strong>.
+         </p>
+         <div style="text-align: center; margin: 32px 0;">
+            <a href="${link}" style="background: #1e88e5; color: #fff; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 15px; display: inline-block;">${cta}</a>
+         </div>
+         <p style="font-size: 13px; color: #888; line-height: 1.6;">${helper}</p>
+         <p style="font-size: 13px; color: #888; line-height: 1.6;">
+            If the button doesn't work, copy and paste this link into your browser:<br/>
+            <a href="${link}" style="color: #1e88e5; word-break: break-all;">${link}</a>
+         </p>
+         <p style="font-size: 13px; color: #aaa; margin-top: 24px;">
+            If you weren't expecting this invitation, you can safely ignore this email.
+         </p>
+         <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+         <p style="font-size: 14px; color: #888; text-align: right; margin: 0;">
+            Best regards,<br/>
+            <span style="color: #1e88e5; font-weight: 600;">Coachiatry Team</span>
+         </p>
+      </div>
+   </div>
+   `;
+};
+
 export const WATCHER_INVITE_HTML = (inviterName: string, link: string) => {
     return `
    <div style="font-family: 'Segoe UI', Arial, sans-serif; background: #f7f7f9; padding: 32px;">

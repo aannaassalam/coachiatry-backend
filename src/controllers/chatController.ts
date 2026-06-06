@@ -2,6 +2,8 @@ import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { NextFunction, Request, Response } from "express";
 import mongoose, { PipelineStage, Types } from "mongoose";
 import ChatModel from "../model/chatModel";
+import GroupInviteModel from "../model/groupInviteModel";
+import UserModel from "../model/userModel";
 import AppError from "../utils/appError";
 import {
     multipartComplete,
@@ -10,6 +12,8 @@ import {
 } from "../utils/aws";
 import catchAsync from "../utils/catchAsync";
 import { sendResponse } from "../utils/response";
+import { sendEmail } from "../utils/email_sms";
+import { GROUP_INVITE_HTML } from "../constants/constants";
 
 const s3 = new S3Client({
     region: process.env.AWS_REGION as string, // Ensuring that the region is of type string
@@ -737,7 +741,14 @@ export const createGroup = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const userId = req.user?._id;
         const groupPhoto = req.file;
-        const { name, members } = req.body;
+        const { name } = req.body;
+        // members may be absent when the group is created purely from email
+        // invites (no directly-addable users selected).
+        const members: string[] = Array.isArray(req.body.members)
+            ? req.body.members
+            : req.body.members
+              ? [req.body.members]
+              : [];
 
         const group = await ChatModel.create({
             name,
@@ -781,7 +792,13 @@ export const editGroup = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const userId = req.user?._id;
         const groupPhoto = req.file;
-        const { name, members, chatId } = req.body;
+        const { name, chatId } = req.body;
+        // members may be absent when an edit only adds email invites.
+        const members: string[] = Array.isArray(req.body.members)
+            ? req.body.members
+            : req.body.members
+              ? [req.body.members]
+              : [];
 
         const currentGroup = await ChatModel.findById(chatId);
         if (!currentGroup) {
@@ -791,7 +808,7 @@ export const editGroup = catchAsync(
         const isOwner =
             currentGroup.members.find(
                 (_mem) => _mem.user.toString() === userId.toString(),
-            ).role === "owner";
+            )?.role === "owner";
         if (!isOwner) {
             throw new AppError(
                 "Edit can only be made by owner of the group",
@@ -876,3 +893,227 @@ export const leaveGroup = catchAsync(
         sendResponse(res, 200, "Group left successfully", group);
     },
 );
+
+// ----------------------------------------------------------------------------
+// GROUP INVITES BY EMAIL
+// ----------------------------------------------------------------------------
+
+const isGroupOwner = (group: any, userId: any) =>
+    group.members.find(
+        (m: any) => m.user.toString() === userId.toString(),
+    )?.role === "owner";
+
+// Add a user to a group if they aren't already a member. Returns true if added.
+async function addUserToGroup(chatId: any, userId: any): Promise<boolean> {
+    const result = await ChatModel.updateOne(
+        { _id: chatId, "members.user": { $ne: userId } },
+        {
+            $push: {
+                members: {
+                    user: userId,
+                    role: "member",
+                    joinedAt: new Date(),
+                    lastReadAt: new Date(),
+                },
+            },
+        },
+    );
+    return result.modifiedCount > 0;
+}
+
+/**
+ * Owner invites one or more emails to a group. For each email:
+ *   - if a user with that email exists, we still create an invite token so
+ *     they join on next login (they may not have direct access yet);
+ *   - if no user exists, the token drives the sign-up → auto-join flow.
+ * An email is sent with a tokenised link in both cases.
+ */
+export const inviteToGroupByEmail = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const userId = req.user?._id;
+        const { chatId, emails } = req.body;
+
+        if (!chatId) return next(new AppError("chatId is required", 400));
+        if (!Array.isArray(emails) || emails.length === 0) {
+            return next(new AppError("No emails provided", 400));
+        }
+
+        const group = await ChatModel.findById(chatId);
+        if (!group || group.type !== "group") {
+            return next(new AppError("Group not found", 404));
+        }
+        if (!isGroupOwner(group, userId)) {
+            return next(
+                new AppError("Only the group owner can invite people", 403),
+            );
+        }
+
+        const normalized = [
+            ...new Set(
+                emails
+                    .map((e: string) => String(e).trim().toLowerCase())
+                    .filter(Boolean),
+            ),
+        ];
+
+        const results = await Promise.all(
+            normalized.map(async (email) => {
+                const existingUser = await UserModel.findById(req.user._id);
+                // Don't invite the owner's own email.
+                if (email === existingUser?.email?.toLowerCase()) {
+                    return { email, skipped: "self" };
+                }
+
+                const accountUser = await UserModel.findOne({
+                    email,
+                    active: true,
+                }).select("_id");
+
+                // If they already exist AND are already a member, skip.
+                if (
+                    accountUser &&
+                    group.members.some(
+                        (m) => m.user.toString() === accountUser._id.toString(),
+                    )
+                ) {
+                    return { email, skipped: "already_member" };
+                }
+
+                // Upsert one invite row per (chat, email).
+                const invite = await GroupInviteModel.findOneAndUpdate(
+                    { chat: chatId, email },
+                    {
+                        chat: chatId,
+                        email,
+                        invitedBy: userId,
+                        acceptedBy: null,
+                        acceptedAt: null,
+                    },
+                    { upsert: true, new: true, setDefaultsOnInsert: true },
+                );
+
+                const isNewUser = !accountUser;
+                // New users go to register first (callback brings them back to
+                // the invite page after they finish auth); existing users go
+                // straight to the invite page, which redirects them to login.
+                const invitePath = `/group-invite/${invite.token}`;
+                const link = isNewUser
+                    ? `${process.env.CLIENT_URL}/auth/register?local_callback=${invitePath}`
+                    : `${process.env.CLIENT_URL}${invitePath}`;
+
+                await sendEmail({
+                    email,
+                    subject: `${req.user.fullName} invited you to "${group.name}"`,
+                    html: GROUP_INVITE_HTML(
+                        req.user.fullName,
+                        (group.name as string) || "a group",
+                        link,
+                        isNewUser,
+                    ),
+                }).catch((err) =>
+                    console.error(
+                        `[group-invite] email to ${email} failed:`,
+                        err,
+                    ),
+                );
+
+                return { email, invited: true, isNewUser };
+            }),
+        );
+
+        sendResponse(res, 200, "Invitations sent", { results });
+    },
+);
+
+/**
+ * Return a lightweight preview of an invite token so the landing page can show
+ * the group name / inviter before the user accepts. Requires auth (the page
+ * sends the user through login first via local_callback).
+ */
+export const getGroupInvite = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { token } = req.params;
+
+        const invite = await GroupInviteModel.findOne({ token })
+            .populate("chat", "name groupPhoto type")
+            .populate("invitedBy", "fullName photo");
+
+        if (!invite) {
+            return next(new AppError("Invite not found or expired", 404));
+        }
+
+        sendResponse(res, 200, "Invite fetched", {
+            token: invite.token,
+            email: invite.email,
+            accepted: !!invite.acceptedBy,
+            chat: invite.chat,
+            invitedBy: invite.invitedBy,
+        });
+    },
+);
+
+/**
+ * Authenticated user accepts an invite token. Adds them to the group and marks
+ * the invite consumed. Returns the chatId so the client can navigate to it.
+ */
+export const acceptGroupInvite = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const userId = req.user?._id;
+        const { token } = req.params;
+
+        const invite = await GroupInviteModel.findOne({ token });
+        if (!invite) {
+            return next(new AppError("Invite not found or expired", 404));
+        }
+
+        const group = await ChatModel.findById(invite.chat);
+        if (!group) {
+            return next(new AppError("Group no longer exists", 404));
+        }
+
+        await addUserToGroup(invite.chat, userId);
+
+        if (!invite.acceptedBy) {
+            invite.acceptedBy = userId;
+            invite.acceptedAt = new Date();
+            await invite.save();
+        }
+
+        sendResponse(res, 200, "Joined group", {
+            chatId: invite.chat.toString(),
+        });
+    },
+);
+
+/**
+ * Called from the auth flow (after signup/verify or first social login) to
+ * auto-join any groups the user's email was invited to. Best-effort: never
+ * throws into the auth path.
+ */
+export async function processPendingGroupInvitesForUser(user: {
+    _id: any;
+    email: string;
+}): Promise<void> {
+    try {
+        const email = user.email?.toLowerCase();
+        if (!email) return;
+
+        const invites = await GroupInviteModel.find({
+            email,
+            acceptedBy: null,
+        });
+
+        await Promise.all(
+            invites.map(async (invite) => {
+                const added = await addUserToGroup(invite.chat, user._id);
+                if (added || !invite.acceptedBy) {
+                    invite.acceptedBy = user._id;
+                    invite.acceptedAt = new Date();
+                    await invite.save();
+                }
+            }),
+        );
+    } catch (err) {
+        console.error("[group-invite] processPending failed:", err);
+    }
+}
