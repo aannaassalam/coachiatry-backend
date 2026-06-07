@@ -8,6 +8,7 @@ import {
     deleteTask,
     editTask,
     getCoachTasks,
+    getTaskAssignees,
     importBulkTasks,
     updateSubtaskStatus,
     updateTaskStatus,
@@ -41,6 +42,7 @@ router.get(
 );
 
 router.patch("/assign-toggle", assignToCoach);
+router.get("/:id/assignees", getTaskAssignees);
 router.patch("/move-to-status/:id", updateTaskStatus);
 router.patch("/completed/:task_id/:subtask_id", updateSubtaskStatus);
 

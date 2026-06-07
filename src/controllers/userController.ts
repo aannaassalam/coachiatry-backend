@@ -13,6 +13,11 @@ import {
     WATCHER_INVITE_HTML,
 } from "../constants/constants";
 import { createDirectChatIfNotExists } from "./chatController";
+import {
+    HIERARCHY_SELECT,
+    flattenHierarchy,
+    getManagementTreeIds,
+} from "../utils/hierarchy";
 
 // Initialize S3 client
 const s3 = new S3Client({
@@ -123,9 +128,6 @@ export const getUserById = catchAsync(
 // managers, then admins). Sensitive fields are stripped from populated docs.
 export const getMe = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const HIERARCHY_SELECT =
-            "-password -otp -otpExpires -passwordResetToken -passwordResetExpires -__v -fcmTokens";
-
         const user = await UserModel.findById(req.user._id)
             .populate({
                 path: "sharedViewers",
@@ -151,53 +153,11 @@ export const getMe = catchAsync(
 
         // Flatten the nested coach→manager→admin tree into one deduplicated
         // array, level by level, stripping each node's own `assignedCoach`.
-        const flattenHierarchy = (roots: any): any[] => {
-            const flat: any[] = [];
-            const seen = new Set<string>();
-            let level: any[] = Array.isArray(roots) ? [...roots] : [];
-
-            while (level.length) {
-                const nextLevel: any[] = [];
-                for (const node of level) {
-                    if (!node || !node._id) continue;
-                    const { assignedCoach: children, ...rest } = node;
-                    const id = String(node._id);
-                    if (!seen.has(id)) {
-                        seen.add(id);
-                        flat.push(rest);
-                    }
-                    if (Array.isArray(children)) nextLevel.push(...children);
-                }
-                level = nextLevel;
-            }
-            return flat;
-        };
-
         user.assignedCoach = flattenHierarchy(user.assignedCoach) as any;
 
         sendResponse(res, 200, "User retrieved successfully", user);
     },
 );
-
-// Collect everyone ABOVE a user (their coach -> manager -> admin chain).
-// Walks UP the assignedCoach graph starting from the given user.
-async function getManagementTreeIds(userId: any) {
-    const result = await UserModel.aggregate([
-        { $match: { _id: new mongoose.Types.ObjectId(userId) } },
-        {
-            $graphLookup: {
-                from: "users",
-                startWith: "$assignedCoach",
-                connectFromField: "assignedCoach",
-                connectToField: "_id",
-                as: "managementTree",
-                maxDepth: 10,
-            },
-        },
-        { $project: { treeIds: "$managementTree._id" } },
-    ]);
-    return result?.[0]?.treeIds || [];
-}
 
 export const suggestUsers = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {

@@ -10,6 +10,10 @@ import { getNextOccurrence } from "../utils/workers/taskWorker";
 import StatusModel from "../model/statusModel";
 import { taskQueue } from "../utils/queues/taskQueue";
 import moment from "moment";
+import {
+    getFlattenedHierarchy,
+    getManagementTreeIds,
+} from "../utils/hierarchy";
 
 export const createTask = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
@@ -53,6 +57,31 @@ export const createTaskByCoach = catchAsync(
     },
 );
 
+// Ensure a user has a status column matching the given task status. Statuses
+// are per-user, but a task carries a single status id (the owner's). When a
+// task is assigned to someone who doesn't have an equivalent column, the task
+// is silently hidden on their board, so we clone the status (title + color)
+// for them. Public/system statuses are shared by everyone, so they're skipped.
+async function ensureStatusForUser(userId: any, statusId: any) {
+    const source = await StatusModel.findById(statusId);
+    if (!source || source.public) return;
+
+    const exists = await StatusModel.findOne({
+        user: userId,
+        title: source.title,
+        active: true,
+    });
+    if (exists) return;
+
+    await StatusModel.create({
+        user: userId,
+        title: source.title,
+        color: source.color,
+        public: false,
+        active: true,
+    });
+}
+
 export const assignToCoach = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const requester = req.user; // logged-in user (patient OR coach OR admin)
@@ -67,26 +96,32 @@ export const assignToCoach = catchAsync(
             return next(new AppError("Task not found", 404));
         }
 
-        // ✅ Optional but recommended: only task owner can assign
-        // If admin/manager/coach should be allowed too, tell me and I’ll modify.
-        if (task.user.toString() !== requester._id.toString()) {
+        // The assignee list is anchored on the task OWNER's management
+        // hierarchy (their coach -> manager -> admin chain). Anyone in that
+        // hierarchy — plus the owner themself — may change the assignee, and
+        // the coach being toggled must also belong to that same set.
+        const ownerId = task.user.toString();
+        const treeIds = (await getManagementTreeIds(task.user)).map(String);
+
+        // Actor check: requester must be the owner or one of the owner's
+        // managers/coaches/admins above them.
+        const requesterId = requester._id.toString();
+        const canAssign =
+            requesterId === ownerId || treeIds.includes(requesterId);
+        if (!canAssign) {
             return next(
                 new AppError("You are not allowed to assign this task", 403),
             );
         }
 
-        // ✅ Ensure the selected coach is one of patient's assigned coaches
-        // const patientAssignedCoaches = requester.assignedCoach || [];
-
-        // const isValidCoach = patientAssignedCoaches.some(
-        //     (id: any) => id.toString() === coachId.toString(),
-        // );
-
-        // if (!isValidCoach) {
-        //     return next(
-        //         new AppError("This coach is not assigned to the patient", 403),
-        //     );
-        // }
+        // Candidate check: the coach being assigned must be the owner or
+        // someone in the owner's management hierarchy.
+        const candidateIds = [ownerId, ...treeIds];
+        if (!candidateIds.includes(coachId.toString())) {
+            return next(
+                new AppError("This user cannot be assigned to the task", 403),
+            );
+        }
 
         // Toggle: add if not present, remove if already assigned
         const alreadyAssigned = task.assignedTo.some(
@@ -98,6 +133,9 @@ export const assignToCoach = catchAsync(
             ) as any;
         } else {
             task.assignedTo.push(coachId);
+            // Give the new assignee a matching status column so the task shows
+            // up on their board instead of being silently filtered out.
+            await ensureStatusForUser(coachId, task.status);
         }
 
         await task.save();
@@ -105,6 +143,41 @@ export const assignToCoach = catchAsync(
         sendResponse(res, 200, "Task executor changed successfully", {
             taskId: task._id,
             assignedTo: task.assignedTo,
+        });
+    },
+);
+
+// GET /api/v1/task/:id/assignees
+// Returns the candidate assignee list for a task, anchored on the task
+// OWNER's management hierarchy (the owner plus their coach -> manager -> admin
+// chain), and whether the current requester is permitted to change it. The
+// list is the same regardless of who is viewing, so a coach/admin editing a
+// task they were assigned to still sees the original owner's options.
+export const getTaskAssignees = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const task = await TaskModel.findById(req.params.id);
+        if (!task) {
+            return next(new AppError("Task not found", 404));
+        }
+
+        const owner = await UserModel.findById(task.user)
+            .select("fullName photo role email updatedAt")
+            .lean();
+
+        const hierarchy = await getFlattenedHierarchy(task.user);
+
+        // Owner first, then their flattened hierarchy.
+        const assignees = [...(owner ? [owner] : []), ...hierarchy];
+
+        const ownerId = task.user.toString();
+        const requesterId = req.user._id.toString();
+        const canAssign = assignees.some(
+            (u: any) => String(u._id) === requesterId,
+        );
+
+        sendResponse(res, 200, "Assignees fetched", {
+            canAssign: canAssign || requesterId === ownerId,
+            assignees,
         });
     },
 );
