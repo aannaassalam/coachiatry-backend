@@ -193,7 +193,13 @@ export const editTask = catchAsync(
         }
         doc.save({ validateBeforeSave: false });
 
-        if (doc.remindBefore) {
+        // Only (re)schedule the reminder when the update actually touched the
+        // scheduling inputs. Autosave sends partial diffs, so a title-only edit
+        // won't carry dueDate/remindBefore and must not churn the queue.
+        const touchedSchedule =
+            "dueDate" in req.body || "remindBefore" in req.body;
+
+        if (doc.remindBefore && touchedSchedule) {
             const oldJob = await taskQueue.getJob(doc._id);
             if (oldJob) {
                 await oldJob.remove();
