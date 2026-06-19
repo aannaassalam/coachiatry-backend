@@ -1,20 +1,19 @@
-import { injectUserId, restrictTo } from "./../../controllers/authController";
+import { restrictTo } from "./../../controllers/authController";
 import express from "express";
 import { protect } from "../../controllers/authController";
-import TranscriptionModel from "../../model/transcriptionModel";
-import { validateUserUpdate } from "../../utils/validator";
-import * as factory from "./../../controllers/handleFactory";
 import { getClients } from "../../controllers/coachController";
+import {
+    deleteTranscription,
+    getTranscription,
+} from "../../controllers/transcriptionController";
 
 const router = express.Router();
 router.use(protect);
 
 router.get("/clients", restrictTo("coach"), getClients);
 
-router
-    .route("/:id")
-    .get(factory.getOne(TranscriptionModel))
-    .delete(factory.deleteOne(TranscriptionModel));
-// .patch(validateUserUpdate, factory.updateOne(TranscriptionModel));
+// Dual-read aware so coaches see segments from the new per-segment model,
+// not just legacy embedded arrays. Cascade-deletes segments too.
+router.route("/:id").get(getTranscription).delete(deleteTranscription);
 
 export default router;

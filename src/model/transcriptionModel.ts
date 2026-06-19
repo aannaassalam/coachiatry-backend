@@ -13,6 +13,11 @@ const transcriptionSchema = new Schema<ITranscriptionDocument>(
             required: true,
             ref: "User",
         },
+        // LEGACY embedded transcript segments. As of the per-segment model
+        // (TranscriptSegment collection) NEW captions are no longer pushed
+        // here — this is retained only so pre-migration documents stay
+        // readable via the dual-read path (loadTranscriptSegments). Once all
+        // documents are migrated this can be dropped.
         transcriptions: [
             {
                 seq: {
@@ -37,6 +42,15 @@ const transcriptionSchema = new Schema<ITranscriptionDocument>(
                 },
             },
         ],
+        // Number of utterances stored in the TranscriptSegment collection for
+        // this transcription. Maintained incrementally on each new segment so
+        // "is this transcript empty?" / the list's segment count never has to
+        // load the segments themselves. > 0 also marks a doc as living in the
+        // new per-segment model (vs. the legacy embedded array).
+        segmentCount: {
+            type: Number,
+            default: 0,
+        },
         active: {
             type: Boolean,
             default: true,
@@ -67,6 +81,9 @@ const transcriptionSchema = new Schema<ITranscriptionDocument>(
 
 transcriptionSchema.index({ title: 1 });
 transcriptionSchema.index({ user: 1 });
+// The list query filters by user and sorts by createdAt desc — this compound
+// index lets Mongo satisfy both from the index instead of sorting in memory.
+transcriptionSchema.index({ user: 1, createdAt: -1 });
 transcriptionSchema.index(
     { user: 1, meetingId: 1, source: 1 },
     { unique: true, partialFilterExpression: { meetingId: { $type: "string" } } }

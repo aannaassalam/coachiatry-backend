@@ -26,8 +26,11 @@ export function buildDocumentsHtml(docList: any[]) {
         : `<p>No matching documents found.</p>`;
 }
 
-export function renderTranscriptForPrompt(doc: any, maxChars = 18000) {
-    const lines = (doc.transcriptions || []).map((t: any) => {
+export function renderTranscriptForPrompt(
+    segments: any[],
+    maxChars = 18000
+) {
+    const lines = (segments || []).map((t: any) => {
         const ts = new Date(t.timestamp).toISOString();
         return `[${ts}] ${t.name}: ${t.text}`;
     });

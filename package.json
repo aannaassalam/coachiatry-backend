@@ -8,6 +8,9 @@
     "start": "node ./build/server.js",
     "dev": "tsc -p tsconfig.json && ts-node-dev --respawn --transpile-only ./src/server.ts",
     "build": "tsc -p tsconfig.json",
+    "migrate:segments": "ts-node src/scripts/migrateTranscriptSegments.ts",
+    "cleanup:legacy-arrays": "ts-node src/scripts/cleanupLegacyArrays.ts",
+    "audit:segments": "ts-node src/scripts/auditSegments.ts",
     "lint": "npx eslint . --fix",
     "clean": "rimraf coverage build tmp node_modules"
   },

@@ -2,6 +2,8 @@ import jwt from "jsonwebtoken";
 import { Namespace, Socket } from "socket.io";
 import UserModel from "../model/userModel";
 import TranscriptionModel from "../model/transcriptionModel";
+import TranscriptSegmentModel from "../model/transcriptSegmentModel";
+import { countTranscriptSegments } from "../services/transcriptSegments.service";
 
 type AuthedSocket = Socket & {
     data: {
@@ -121,55 +123,37 @@ export default (_nsp: Namespace, socket: AuthedSocket) => {
                 socket.data.transcriptionIdByMeeting![meetingId] = docId;
             }
 
-            const seqStr = seq != null ? String(seq) : "";
+            // A seq is required to dedupe a retransmit of the same utterance.
+            // The aggregator always supplies one; synthesize a stable fallback
+            // for any legacy client that doesn't so two distinct utterances
+            // can't collide on the same key.
+            const seqStr =
+                seq != null && String(seq) !== ""
+                    ? String(seq)
+                    : `auto-${ts}-${Math.random().toString(36).slice(2, 8)}`;
             const name = speaker || "Unknown";
             const timestamp = new Date(ts);
 
-            // Upsert-by-seq: while the extension grows the same caption row
-            // (one speaker continuing to talk) we keep updating the same
-            // segment in place rather than pushing duplicates. If the
-            // client didn't supply a seq, fall back to $push for backward
-            // compat.
-            if (seqStr) {
-                const result = await TranscriptionModel.updateOne(
-                    { _id: docId, "transcriptions.seq": seqStr },
-                    {
-                        $set: {
-                            "transcriptions.$.name": name,
-                            "transcriptions.$.text": text,
-                            "transcriptions.$.timestamp": timestamp,
-                        },
-                    }
-                );
-                if (result.matchedCount === 0) {
-                    await TranscriptionModel.updateOne(
-                        { _id: docId },
-                        {
-                            $push: {
-                                transcriptions: {
-                                    seq: seqStr,
-                                    name,
-                                    profile: "",
-                                    text,
-                                    timestamp,
-                                },
-                            },
-                        }
-                    );
-                }
-            } else {
+            // ONE indexed upsert against the per-segment collection. Keyed on
+            // the unique {transcription, seq} index, so a retransmit updates
+            // the existing segment in place and a first transmit inserts a new
+            // one — O(log n), no array scan, no 16 MB document ceiling. We bump
+            // the parent's segmentCount only when a NEW segment is inserted.
+            const result = await TranscriptSegmentModel.updateOne(
+                { transcription: docId, seq: seqStr },
+                {
+                    // transcription + seq come from the filter equality on
+                    // insert, so they only need to live here implicitly.
+                    $set: { name, text, timestamp },
+                    $setOnInsert: { user: userId, profile: "" },
+                },
+                { upsert: true }
+            );
+
+            if (result.upsertedCount && result.upsertedCount > 0) {
                 await TranscriptionModel.updateOne(
                     { _id: docId },
-                    {
-                        $push: {
-                            transcriptions: {
-                                name,
-                                profile: "",
-                                text,
-                                timestamp,
-                            },
-                        },
-                    }
+                    { $inc: { segmentCount: 1 } }
                 );
             }
 
@@ -200,15 +184,23 @@ export default (_nsp: Namespace, socket: AuthedSocket) => {
             // user joined the meet but never clicked record, or recorded
             // briefly but no one spoke. Either way there's nothing to keep
             // around to clutter the list.
-            const doc = await TranscriptionModel.findOne(filter).select(
-                "_id transcriptions"
-            );
+            const doc = await TranscriptionModel.findOne(filter)
+                .select("_id transcriptions segmentCount")
+                .lean();
             if (!doc) {
                 return ack?.({ ok: true });
             }
 
-            if (!doc.transcriptions || doc.transcriptions.length === 0) {
-                await TranscriptionModel.deleteOne({ _id: doc._id });
+            // Dual-read aware emptiness check — no longer loads a (potentially
+            // huge) embedded array just to test length.
+            const total = await countTranscriptSegments(doc);
+            if (total === 0) {
+                await Promise.all([
+                    TranscriptionModel.deleteOne({ _id: doc._id }),
+                    TranscriptSegmentModel.deleteMany({
+                        transcription: doc._id,
+                    }),
+                ]);
                 console.log(
                     `[meet] deleted empty transcription for meeting ${meetingId}`
                 );

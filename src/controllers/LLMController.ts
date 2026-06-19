@@ -23,6 +23,7 @@ import {
     enforceHtmlRules,
 } from "../ai/handlers";
 import TranscriptionModel from "../model/transcriptionModel";
+import { loadTranscriptSegments } from "../services/transcriptSegments.service";
 import CategoryModel from "../model/categoryModel";
 import TaskModel from "../model/taskModel";
 import DocumentModel from "../model/documentModel";
@@ -803,14 +804,16 @@ export const transcriptionAIController = catchAsync(
         const sessionId = getOrCreateSessionId(req);
         await sessionStore.upsert(sessionId, userId);
 
-        // Load transcript and categories. The `active: true` filter is
-        // intentional — task generation is gated to the meeting the user is
-        // currently in. Past meetings cannot generate new tasks.
+        // Load transcript and categories. NOTE: no `active` filter here — the
+        // web app can generate tasks/summaries for PAST transcripts too. The
+        // "current meeting only" gate is extension-specific and enforced
+        // upstream in meetingTasksController (its lookup requires active:true
+        // before delegating here), so this path stays open for past meetings
+        // while ownership (`user`) is still enforced.
         const [doc, categoriesRaw] = await Promise.all([
             TranscriptionModel.findOne({
                 _id: transcriptionId,
                 user: userId,
-                active: true,
             }).lean(),
             CategoryModel.find({
                 $or: [{ public: true, user: null }, { user: userId }],
@@ -819,11 +822,14 @@ export const transcriptionAIController = catchAsync(
 
         if (!doc) {
             return res.status(404).json({
-                error: "Transcription not found (or no longer active — task generation is only available for the meeting you're currently in).",
+                error: "Transcription not found.",
             });
         }
 
-        const transcriptText = renderTranscriptForPrompt(doc);
+        // Dual-read: pull segments from the per-segment collection, falling
+        // back to the legacy embedded array for pre-migration transcripts.
+        const { segments } = await loadTranscriptSegments(doc);
+        const transcriptText = renderTranscriptForPrompt(segments);
         const categoryCatalog = buildCategoryCatalog(categoriesRaw || []);
         const fallbackCategory = categoryCatalog[0] || {
             id: "general",

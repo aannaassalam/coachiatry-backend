@@ -37,6 +37,13 @@ interface GetAllOptions extends Message {
     // dropped from the response. Applied in addition to the caller's
     // ?populate= so the field is never silently missed.
     requirePopulated?: string[];
+    // Default field projection applied when the request didn't pass ?fields=.
+    // Pushed to MongoDB, so an excluded field (e.g. a heavy embedded array) is
+    // never even read from disk. Use to keep list payloads small.
+    selectFields?: string;
+    // Return plain JS objects instead of hydrated Mongoose docs — cheaper for
+    // read-only list endpoints.
+    lean?: boolean;
 }
 
 export const deleteOne = <T = any>(Model: Model<T>, options?: Message) =>
@@ -167,6 +174,17 @@ export const getAll = <T = any>(Model: Model<T>, options?: GetAllOptions) =>
             .paginate()
             .search()
             .populate();
+
+        // Default projection (only when the caller didn't pass ?fields=, to
+        // avoid mixing inclusion/exclusion). Excludes heavy fields at the DB
+        // level so list payloads stay small.
+        if (options?.selectFields && !req.query.fields) {
+            features.query = features.query.select(options.selectFields);
+        }
+        if (options?.lean) {
+            features.query = features.query.lean();
+        }
+
         await features.calculateTotalCount();
         const doc = await features.query;
 

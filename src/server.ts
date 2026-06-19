@@ -12,6 +12,19 @@ import { verifyRedisConnection } from "./utils/redis";
 
 const PORT = process.env.PORT || 3001;
 
+// Process-level safety net. A single rejected promise deep inside a socket
+// handler or background worker used to be able to take the whole server down
+// (Node terminates on unhandled rejections), which killed every other user's
+// live meeting along with it. Log loudly and keep serving — a bad caption
+// write must not become a fleet-wide outage. (Per-request errors are still
+// caught and handled locally; this only catches what escaped.)
+process.on("unhandledRejection", (reason) => {
+    console.error("[server] Unhandled promise rejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+    console.error("[server] Uncaught exception:", err);
+});
+
 // function errorHandler(
 //    err: any,
 //    _req: Request,

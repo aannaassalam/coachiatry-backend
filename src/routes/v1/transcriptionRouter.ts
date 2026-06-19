@@ -1,28 +1,39 @@
-import { injectUserId, restrictTo } from "./../../controllers/authController";
-import express, { NextFunction, Request, Response } from "express";
-import { protect } from "../../controllers/authController";
+import express from "express";
+import { protect, restrictTo } from "../../controllers/authController";
 import TranscriptionModel from "../../model/transcriptionModel";
-import { validateUserUpdate } from "../../utils/validator";
-import { sendResponse } from "../../utils/response";
-import AppError from "../../utils/appError";
-import catchAsync from "../../utils/catchAsync";
 import * as factory from "./../../controllers/handleFactory";
+import {
+    deleteTranscription,
+    getTranscription,
+    getTranscriptionByMeeting,
+} from "../../controllers/transcriptionController";
 
 const router = express.Router();
 router.use(protect);
+
+// List rows only need metadata + segmentCount for the cards — NEVER the
+// (potentially huge) embedded `transcriptions` array. `selectFields` excludes
+// it at the DB level and `lean` skips Mongoose hydration, so the list stays
+// fast regardless of how long individual meetings are. Detail/by-meeting
+// routes still return segments.
+const LIST_OPTS = { selectFields: "-transcriptions", lean: true } as const;
 
 router
     .route("/")
     .get(
         factory.getAll(TranscriptionModel, {
+            ...LIST_OPTS,
             currentUserOnly: true,
-            // Hide transcripts that never captured anything — covers both
-            // legacy empty docs and any extension docs that slipped past
-            // the on-meeting-end garbage collector (e.g., browser crash
-            // mid-meeting before meeting/end fired).
+            // Hide transcripts that never captured anything. A transcript is
+            // non-empty if it's manual, has segmentCount > 0 (new model), OR
+            // still carries a legacy embedded array. The array branch is the
+            // safety net for any extension doc whose segmentCount wasn't
+            // stamped by the migration — without it those gmeets vanish from
+            // the list even though their data is intact.
             additionalFilter: {
                 $or: [
                     { source: { $ne: "extension" } },
+                    { segmentCount: { $gt: 0 } },
                     { "transcriptions.0": { $exists: true } },
                 ],
             },
@@ -34,46 +45,22 @@ router
     .route("/coach")
     .get(
         restrictTo("admin", "manager", "coach"),
-        factory.getAll(TranscriptionModel)
+        factory.getAll(TranscriptionModel, LIST_OPTS)
     );
 
 router
     .route("/coach/:id")
-    .delete(
-        restrictTo("admin", "manager", "coach"),
-        factory.deleteOne(TranscriptionModel)
-    );
+    .delete(restrictTo("admin", "manager", "coach"), deleteTranscription);
 
 // Lookup a user's most-recent extension-captured transcription for a given
-// Google Meet code. Used by the extension's live recording view to poll.
-// Must be declared BEFORE the /:id route or Express will route "by-meeting"
-// as an id.
-router.get(
-    "/by-meeting/:meetingId",
-    catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-        const doc = await TranscriptionModel.findOne({
-            user: req.user._id,
-            meetingId: req.params.meetingId,
-            source: "extension",
-        })
-            .sort({ createdAt: -1 })
-            .lean();
-        if (!doc) {
-            return next(
-                new AppError(
-                    `No transcription found for meeting ${req.params.meetingId}`,
-                    404
-                )
-            );
-        }
-        sendResponse(res, 200, "Transcription retrieved successfully", doc);
-    })
-);
+// Google Meet code. Used by the extension's live recording view to poll
+// (supports ?after=<segmentId> for incremental delta fetches). Must be
+// declared BEFORE the /:id route or Express will route "by-meeting" as an id.
+router.get("/by-meeting/:meetingId", getTranscriptionByMeeting);
 
 router
     .route("/:id")
-    .get(factory.getOne(TranscriptionModel))
-    .delete(factory.deleteOne(TranscriptionModel));
-// .patch(validateUserUpdate, factory.updateOne(TranscriptionModel));
+    .get(getTranscription)
+    .delete(deleteTranscription);
 
 export default router;

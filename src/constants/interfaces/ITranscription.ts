@@ -16,7 +16,11 @@ export type TranscriptionSource = "extension" | "manual";
 export interface ITranscriptionDocument extends Document {
     title: string;
     user: ObjectId;
+    // LEGACY embedded segments — retained for dual-read of pre-migration
+    // documents only. New captions live in the TranscriptSegment collection.
     transcriptions: ITranscription[];
+    // Count of segments in the TranscriptSegment collection for this doc.
+    segmentCount: number;
     active: boolean;
     // Populated when the document was created from the browser extension
     // capturing a live Google Meet session.
