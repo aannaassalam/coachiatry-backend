@@ -53,17 +53,23 @@ export const messageWorker = new Worker(
                 template.repeat,
             );
 
-            // Update the original schedule
-            template.scheduledAt = next;
-            await template.save();
+            // Schedule the next occurrence and remember its job id so an edit
+            // can find and replace it.
+            const delay = Math.max(0, next.getTime() - Date.now());
+            const nextJob = await messageQueue.add(
+                "sendMessage",
+                { messageId },
+                { delay, attempts: 3 },
+            );
 
-            // Schedule next job
-            const delay = next.getTime() - Date.now();
-            await messageQueue.add("sendMessage", { messageId }, { delay });
+            template.scheduledAt = next;
+            template.jobId = nextJob.id;
+            await template.save();
         } else {
             // Mark one-time schedule as done
             template.status = "sent";
             template.scheduledAt = null;
+            template.jobId = null;
             await template.save();
 
             sentMessage = template;

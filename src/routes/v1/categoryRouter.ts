@@ -27,7 +27,7 @@ router
     )
     .post(
         restrictTo("admin", "manager", "coach"),
-        factory.createOne(CategoryModel)
+        factory.createOne(CategoryModel, { ownerFromParam: "userId" })
     );
 
 router

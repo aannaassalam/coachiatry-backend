@@ -19,6 +19,9 @@ interface Message {
 interface CreateOptions extends Message {
     afterCreate?: (doc: any) => Promise<void> | void;
     userAsDocumentOwner?: boolean;
+    // Force the created doc's `user` to a route param (e.g. the client a
+    // coach/manager/admin is acting on behalf of), regardless of the body.
+    ownerFromParam?: string;
 }
 
 interface GetAllOptions extends Message {
@@ -92,6 +95,12 @@ export const createOne = <T = any>(
         const body = req.body;
         if (options?.userAsDocumentOwner) {
             body.user = req.user._id;
+        }
+        // Authoritatively set ownership from the route param so a
+        // coach/manager/admin acting on a client's behalf can't (accidentally
+        // or maliciously) misfile the doc under someone else via the body.
+        if (options?.ownerFromParam && req.params?.[options.ownerFromParam]) {
+            body.user = req.params[options.ownerFromParam];
         }
         const doc = await Model.create(body);
 

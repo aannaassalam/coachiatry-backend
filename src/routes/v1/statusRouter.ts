@@ -27,7 +27,7 @@ router
     )
     .post(
         restrictTo("admin", "manager", "coach"),
-        factory.createOne(StatusModel)
+        factory.createOne(StatusModel, { ownerFromParam: "userId" })
     );
 
 router

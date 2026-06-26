@@ -1,4 +1,3 @@
-import moment from "moment";
 import { Request, Response, NextFunction } from "express";
 import catchAsync from "../utils/catchAsync";
 import AppError from "../utils/appError";
@@ -104,29 +103,51 @@ export const getMessages = catchAsync(
     }
 );
 
+// Remove any previously-queued send job for this message, then enqueue a fresh
+// one for its current scheduledAt. The client sends an absolute UTC timestamp,
+// so the delay is plain epoch math — independent of the server's timezone.
+// We persist the BullMQ job id so a later edit can find and replace this exact
+// job instead of leaving a stale one to fire at the old time.
+async function rescheduleSend(msg: any) {
+    if (msg.jobId) {
+        try {
+            const existing = await messageQueue.getJob(msg.jobId);
+            if (existing) await existing.remove();
+        } catch (err) {
+            console.error(`Failed to remove old job ${msg.jobId}:`, err);
+        }
+    }
+
+    const delay = Math.max(0, new Date(msg.scheduledAt).getTime() - Date.now());
+
+    const job = await messageQueue.add(
+        "sendMessage",
+        { messageId: msg._id },
+        { delay, attempts: 3 },
+    );
+
+    msg.jobId = job.id;
+    await msg.save();
+}
+
 export const scheduleMessage = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const userId = req.user?._id;
-        const { message, date, time, frequency, chatId } = req.body;
+        const { message, scheduledAt, frequency, chatId } = req.body;
+
+        if (!scheduledAt || isNaN(new Date(scheduledAt).getTime())) {
+            return next(new AppError("A valid scheduledAt is required", 400));
+        }
 
         const msg = await MessageModel.create({
             sender: userId,
             chat: chatId,
             content: message,
-            scheduledAt: moment(`${date} ${time}`, "YYYY-MM-DD HH:mm").toDate(),
+            scheduledAt: new Date(scheduledAt),
             repeat: frequency || "none",
         });
 
-        const delay = new Date(msg.scheduledAt).getTime() - Date.now();
-
-        await messageQueue.add(
-            "sendMessage",
-            { messageId: msg._id },
-            {
-                delay: Math.max(delay, 0),
-                attempts: 3, // retry logic
-            }
-        );
+        await rescheduleSend(msg);
 
         sendResponse(res, 200, "Message scheduled successfully", msg);
     }
@@ -135,31 +156,27 @@ export const scheduleMessage = catchAsync(
 export const editScheduleMessage = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const messageId = req.params?.messageId;
-        const { message, date, time, frequency } = req.body;
+        const { message, scheduledAt, frequency } = req.body;
 
-        const msg = await MessageModel.findByIdAndUpdate(messageId, {
-            content: message,
-            scheduledAt: moment(`${date} ${time}`, "YYYY-MM-DD HH:mm").toDate(),
-            repeat: frequency || "none",
-        });
-
-        const oldJob = await messageQueue.getJob(msg._id);
-        if (oldJob) {
-            await oldJob.remove();
-            console.log(`🗑️ Removed old job for message ${msg._id}`);
-
-            const delay = new Date(msg.scheduledAt).getTime() - Date.now();
-
-            await messageQueue.add(
-                "sendMessage",
-                { messageId: msg._id },
-                {
-                    jobId: msg._id,
-                    delay: Math.max(delay, 0),
-                    attempts: 3, // retry logic
-                }
-            );
+        if (!scheduledAt || isNaN(new Date(scheduledAt).getTime())) {
+            return next(new AppError("A valid scheduledAt is required", 400));
         }
+
+        const msg = await MessageModel.findByIdAndUpdate(
+            messageId,
+            {
+                content: message,
+                scheduledAt: new Date(scheduledAt),
+                repeat: frequency || "none",
+            },
+            { new: true },
+        );
+
+        if (!msg) {
+            return next(new AppError("Scheduled message not found", 404));
+        }
+
+        await rescheduleSend(msg);
 
         sendResponse(res, 200, "Message edited successfully", msg);
     }

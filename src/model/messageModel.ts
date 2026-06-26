@@ -67,6 +67,9 @@ const messageSchema = new Schema<IMessageDocument>(
             default: null,
         },
         scheduledAt: { type: Date },
+        // BullMQ job id of the pending "send" job, so an edit can find and
+        // remove the exact queued job before re-scheduling.
+        jobId: { type: String, default: null },
         repeat: {
             type: String,
             enum: ["none", "daily", "weekly", "monthly", "yearly"],
