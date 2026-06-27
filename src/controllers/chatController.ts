@@ -844,10 +844,18 @@ export const editGroup = catchAsync(
             })),
         ];
 
-        const group = await ChatModel.findByIdAndUpdate(chatId, {
-            name,
-            members: updatedMembers,
-        });
+        const group = await ChatModel.findByIdAndUpdate(
+            chatId,
+            {
+                name,
+                members: updatedMembers,
+            },
+            { new: true },
+        );
+
+        if (!group) {
+            throw new AppError("Group not found", 404);
+        }
 
         if (groupPhoto) {
             const ext = groupPhoto.originalname.split(".").pop();
@@ -884,11 +892,15 @@ export const leaveGroup = catchAsync(
             throw new AppError("Group not found", 404);
         }
 
-        const group = await ChatModel.findByIdAndUpdate(chatId, {
-            members: currentGroup.members.filter(
-                (m) => m.user.toString() !== userId.toString(),
-            ),
-        });
+        const group = await ChatModel.findByIdAndUpdate(
+            chatId,
+            {
+                members: currentGroup.members.filter(
+                    (m) => m.user.toString() !== userId.toString(),
+                ),
+            },
+            { new: true },
+        );
 
         sendResponse(res, 200, "Group left successfully", group);
     },

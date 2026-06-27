@@ -91,6 +91,12 @@ messageSchema.index({ chat: 1, createdAt: -1 }); // get latest messages fast
 messageSchema.index({ sender: 1, createdAt: -1 }); // filter user’s messages
 messageSchema.index({ replyTo: 1 }); // for threaded replies
 messageSchema.index({ scheduledAt: 1 });
+// Unread-count aggregation: messages in a chat from other senders after a time
+messageSchema.index({ chat: 1, sender: 1, createdAt: -1 });
+// Chat message list filters on { chat, scheduledAt: null } sorted by createdAt
+messageSchema.index({ chat: 1, scheduledAt: 1, createdAt: -1 });
+// Scheduled-message lists filter on { sender, scheduledAt: { $ne: null } }
+messageSchema.index({ sender: 1, scheduledAt: 1 });
 
 const MessageModel = mongoose.model<IMessageDocument>("Message", messageSchema);
 export default MessageModel;

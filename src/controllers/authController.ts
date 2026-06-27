@@ -341,6 +341,14 @@ export const protect = catchAsync(
                 ),
             );
         }
+        if (currentUser.active === false) {
+            return next(
+                new AppError(
+                    "Your account has been deactivated. Please contact support.",
+                    StatusCodes.UNAUTHORIZED,
+                ),
+            );
+        }
         // if (currentUser.changedPasswordAfter(decoded.iat)) {
         //     return next(
         //         new AppError(
@@ -422,12 +430,23 @@ export const forgotPassword = catchAsync(
 export const verifyOtp = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const { otp, email, platform } = req.body;
-        console.log(req.body);
+
+        // Require string inputs (prevents NoSQL operator injection like
+        // `{ otp: { $ne: null } }`) and enforce OTP expiry.
+        if (typeof otp !== "string" || typeof email !== "string") {
+            return next(
+                new AppError(
+                    "OTP and email are required",
+                    StatusCodes.BAD_REQUEST,
+                ),
+            );
+        }
+
         const user = await UserModel.findOne(
             {
                 otp: otp,
                 email: email,
-                // otpExpires: { $gt: Date.now() },
+                otpExpires: { $gt: new Date() },
             },
             "-fcmTokens",
         ).sort({ createdAt: -1 });

@@ -7,6 +7,7 @@ import {
     getTranscription,
     getTranscriptionByMeeting,
 } from "../../controllers/transcriptionController";
+import { authorizeTranscriptionAccess } from "../../utils/authorize";
 
 const router = express.Router();
 router.use(protect);
@@ -60,7 +61,7 @@ router.get("/by-meeting/:meetingId", getTranscriptionByMeeting);
 
 router
     .route("/:id")
-    .get(getTranscription)
-    .delete(deleteTranscription);
+    .get(authorizeTranscriptionAccess("id"), getTranscription)
+    .delete(authorizeTranscriptionAccess("id"), deleteTranscription);
 
 export default router;

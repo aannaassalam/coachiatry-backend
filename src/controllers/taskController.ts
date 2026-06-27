@@ -326,6 +326,9 @@ export const accessSharedTasks = catchAsync(
         const currentUserId = req.user._id;
 
         const sharer = await UserModel.findOne({ shareId });
+        if (!sharer) {
+            return next(new AppError("Invalid share link", 404));
+        }
 
         const isAuthorized = sharer.sharedViewers.includes(currentUserId);
         if (!isAuthorized) {

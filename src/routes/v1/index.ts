@@ -28,27 +28,33 @@ router.get(
     protect,
     catchAsync(async (req: Request, res: Response, next: NextFunction) => {
         const currentUserId = req.user?._id;
-        const { query = "", category = "all" } = req.query;
+        const { category = "all" } = req.query;
+
+        // Only accept a string and escape regex metacharacters — prevents
+        // NoSQL operator injection (object query) and ReDoS from `*`/`(`/etc.
+        const rawQuery =
+            typeof req.query.query === "string" ? req.query.query : "";
+        const safeQuery = rawQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
         const queryArrays = [
             {
                 name: "task",
                 model: TaskModel.find({
-                    title: { $regex: query as string, $options: "i" },
+                    title: { $regex: safeQuery, $options: "i" },
                     user: currentUserId,
                 }).limit(10),
             },
             {
                 name: "transcript",
                 model: TranscriptionModel.find({
-                    title: { $regex: query as string, $options: "i" },
+                    title: { $regex: safeQuery, $options: "i" },
                     user: currentUserId,
                 }).limit(10),
             },
             {
                 name: "document",
                 model: DocumentModel.find({
-                    title: { $regex: query as string, $options: "i" },
+                    title: { $regex: safeQuery, $options: "i" },
                     user: currentUserId,
                 }).limit(10),
             },

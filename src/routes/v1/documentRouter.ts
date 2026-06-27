@@ -8,6 +8,7 @@ import {
     getAllDocuments,
     getAllDocumentsByCoach,
 } from "../../controllers/documentController";
+import { authorizeDocumentAccess } from "../../utils/authorize";
 
 const router = express.Router();
 router.use(protect);
@@ -27,9 +28,13 @@ router
 
 router
     .route("/:id")
-    .get(factory.getOne(DocumentModel))
-    .patch(validateDocumentUpdate, factory.updateOne(DocumentModel))
-    .delete(factory.deleteOne(DocumentModel));
+    .get(authorizeDocumentAccess("id"), factory.getOne(DocumentModel))
+    .patch(
+        authorizeDocumentAccess("id"),
+        validateDocumentUpdate,
+        factory.updateOne(DocumentModel)
+    )
+    .delete(authorizeDocumentAccess("id"), factory.deleteOne(DocumentModel));
 
 router.route("/share/:shareId").get(accessSharedDocument);
 

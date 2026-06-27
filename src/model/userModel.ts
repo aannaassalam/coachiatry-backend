@@ -116,6 +116,10 @@ userSchema.index(
 userSchema.index({ name: "text" });
 userSchema.index({ role: 1 });
 userSchema.index({ assignedCoach: 1 });
+// User lists filter on { active, verified }; email lookups happen with varying
+// active/verified combos that don't always match the unique partial index.
+userSchema.index({ active: 1, verified: 1 });
+userSchema.index({ email: 1 });
 
 userSchema.pre<IUserDocument>("save", async function (next) {
     if (!this.isModified("password")) return next();

@@ -16,6 +16,7 @@ import {
 import TaskModel from "../../model/taskModel";
 import { restrictTo } from "./../../controllers/authController";
 import * as factory from "./../../controllers/handleFactory";
+import { authorizeTaskAccess } from "../../utils/authorize";
 
 const router = express.Router();
 router.use(protect);
@@ -30,7 +31,11 @@ router
     )
     .post(createTask);
 
-router.post("/coach", createTaskByCoach);
+router.post(
+    "/coach",
+    restrictTo("admin", "manager", "coach"),
+    createTaskByCoach
+);
 
 // Coach/manager/admin viewing a specific client's tasks (owned by OR
 // assigned to that client). Path param keeps the client id out of the
@@ -42,17 +47,25 @@ router.get(
 );
 
 router.patch("/assign-toggle", assignToCoach);
-router.get("/:id/assignees", getTaskAssignees);
-router.patch("/move-to-status/:id", updateTaskStatus);
-router.patch("/completed/:task_id/:subtask_id", updateSubtaskStatus);
+router.get("/:id/assignees", authorizeTaskAccess("id"), getTaskAssignees);
+router.patch(
+    "/move-to-status/:id",
+    authorizeTaskAccess("id"),
+    updateTaskStatus
+);
+router.patch(
+    "/completed/:task_id/:subtask_id",
+    authorizeTaskAccess("task_id"),
+    updateSubtaskStatus
+);
 
 router.get("/shared/:shareId", accessSharedTasks);
 
 router
     .route("/:id")
-    .get(factory.getOne(TaskModel))
-    .patch(editTask)
-    .delete(deleteTask);
+    .get(authorizeTaskAccess("id"), factory.getOne(TaskModel))
+    .patch(authorizeTaskAccess("id"), editTask)
+    .delete(authorizeTaskAccess("id"), deleteTask);
 
 router.post("/import-bulk-tasks", importBulkTasks);
 

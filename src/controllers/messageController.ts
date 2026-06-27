@@ -5,6 +5,7 @@ import MessageModel from "../model/messageModel";
 import { sendResponse } from "../utils/response";
 import { PipelineStage, Types } from "mongoose";
 import { messageQueue } from "../utils/queues/messageQueue";
+import { isChatMember } from "../utils/authorize";
 
 export const getMessages = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
@@ -12,6 +13,12 @@ export const getMessages = catchAsync(
 
         if (!room) {
             return next(new AppError("No Room provided", 401));
+        }
+
+        if (!(await isChatMember(room, req.user._id))) {
+            return next(
+                new AppError("You are not a member of this chat", 403),
+            );
         }
 
         const page = parseInt((req.query.page as string) || "1", 10);
@@ -86,6 +93,7 @@ export const getMessages = catchAsync(
 
         const total = await MessageModel.countDocuments({
             chat: room,
+            scheduledAt: null,
         });
 
         const totalPages = Math.ceil(total / limit);
@@ -139,6 +147,12 @@ export const scheduleMessage = catchAsync(
             return next(new AppError("A valid scheduledAt is required", 400));
         }
 
+        if (!(await isChatMember(chatId, userId))) {
+            return next(
+                new AppError("You are not a member of this chat", 403),
+            );
+        }
+
         const msg = await MessageModel.create({
             sender: userId,
             chat: chatId,
@@ -160,6 +174,17 @@ export const editScheduleMessage = catchAsync(
 
         if (!scheduledAt || isNaN(new Date(scheduledAt).getTime())) {
             return next(new AppError("A valid scheduledAt is required", 400));
+        }
+
+        // Only the user who scheduled the message may edit it.
+        const existing = await MessageModel.findById(messageId);
+        if (!existing) {
+            return next(new AppError("Scheduled message not found", 404));
+        }
+        if (existing.sender.toString() !== req.user._id.toString()) {
+            return next(
+                new AppError("You are not allowed to edit this message", 403),
+            );
         }
 
         const msg = await MessageModel.findByIdAndUpdate(

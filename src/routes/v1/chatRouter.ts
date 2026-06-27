@@ -20,6 +20,7 @@ import {
 } from "../../controllers/chatController";
 import upload from "../../utils/multerConfig";
 import { getUsersById } from "../../controllers/userController";
+import { authorizeChatMembership } from "../../utils/authorize";
 
 const router = express.Router();
 router.use(protect);
@@ -50,6 +51,6 @@ router.get("/group/invite/:token", getGroupInvite);
 router.post("/group/invite/:token/accept", acceptGroupInvite);
 
 // Keep this LAST — it's a catch-all that would otherwise swallow /group/* paths.
-router.get("/:roomId", getConversation);
+router.get("/:roomId", authorizeChatMembership("roomId"), getConversation);
 
 export default router;
