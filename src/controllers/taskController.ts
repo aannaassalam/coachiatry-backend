@@ -14,6 +14,81 @@ import {
     getFlattenedHierarchy,
     getManagementTreeIds,
 } from "../utils/hierarchy";
+// Field-limited populate used ONLY for the opt-in slim payload (?slim=true).
+// Two reasons:
+//   1) Payload size — a 10k-task list otherwise drags full user/category/status
+//      docs per row (tens of MB). The table only needs these fields.
+//   2) Safety — populated users would otherwise rely on the User model's toJSON
+//      transform to strip password/otp/tokens, which `.lean()` bypasses. An
+//      explicit whitelist never selects those fields in the first place.
+const TASK_LIST_POPULATE = [
+    { path: "user", select: "fullName photo role updatedAt" },
+    { path: "assignedTo", select: "fullName photo role updatedAt" },
+    { path: "category", select: "title color" },
+    { path: "status", select: "title color priority" },
+];
+
+// Shared list pipeline. The default branch reproduces the original endpoint
+// behaviour exactly (full populate from ?populate=, hydrated docs so the User
+// toJSON transform still strips secrets, ?limit= honoured) so the OTHER app that
+// consumes this API is unaffected. The web app opts into a trimmed + lean
+// payload with ?slim=true. Dangling status/category rows are dropped either way.
+async function fetchTaskList(
+    baseFilter: Record<string, any>,
+    req: Request,
+): Promise<any[]> {
+    const slim = req.query.slim === "true";
+
+    const features = new APIFeatures(TaskModel.find(baseFilter), req.query as any)
+        .filter()
+        .sort()
+        .limitFields()
+        .search();
+
+    if (slim) {
+        features.query = features.query
+            .populate(TASK_LIST_POPULATE as any)
+            .lean();
+    } else {
+        features.populate();
+        // Ensure status/category are populated even if ?populate= omitted them
+        // (the table/dangling-drop below needs them) — mirrors the old factory.
+        features.query = features.query
+            .populate("status")
+            .populate("category");
+    }
+
+    if (req.query.limit) {
+        const limit = parseInt(req.query.limit as string, 10);
+        if (!isNaN(limit) && limit > 0) {
+            features.query = features.query.limit(limit);
+        }
+    }
+
+    const raw = (await features.query) as any[];
+    return raw.filter((t) => t?.status != null && t?.category != null);
+}
+
+// GET /api/v1/task/ — the logged-in user's list (tasks they own OR are assigned
+// to). Uses fetchTaskList; an explicit ?user= override still works via
+// APIFeatures.filter() (mirrors the old factory behaviour).
+export const getMyTasks = catchAsync(
+    async (req: Request, res: Response, _next: NextFunction) => {
+        const filter: Record<string, any> = {
+            status: { $ne: null },
+            category: { $ne: null },
+        };
+        if (!req.query.user && req.user) {
+            filter.$or = [
+                { user: req.user._id },
+                { assignedTo: req.user._id },
+            ];
+        }
+
+        const doc = await fetchTaskList(filter, req);
+        sendResponse(res, 200, "Tasks retrieved successfully", doc);
+    },
+);
 
 export const createTask = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
@@ -82,6 +157,10 @@ async function ensureStatusForUser(userId: any, statusId: any) {
     });
 }
 
+// Staff roles can assign tasks to ANY staff member system-wide; a regular
+// "user"/patient is still limited to their owner-hierarchy.
+const STAFF_ROLES = ["admin", "manager", "coach"];
+
 export const assignToCoach = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const requester = req.user; // logged-in user (patient OR coach OR admin)
@@ -103,21 +182,47 @@ export const assignToCoach = catchAsync(
         const ownerId = task.user.toString();
         const treeIds = (await getManagementTreeIds(task.user)).map(String);
 
-        // Actor check: requester must be the owner or one of the owner's
-        // managers/coaches/admins above them.
+        // Actor check: requester must be the owner, someone in the owner's
+        // management hierarchy, or a current assignee (matches authorizeTaskAccess
+        // and the frontend's canEdit).
         const requesterId = requester._id.toString();
+        const requesterIsAssignee = task.assignedTo.some(
+            (id) => id.toString() === requesterId,
+        );
         const canAssign =
-            requesterId === ownerId || treeIds.includes(requesterId);
+            requesterId === ownerId ||
+            treeIds.includes(requesterId) ||
+            requesterIsAssignee;
         if (!canAssign) {
             return next(
                 new AppError("You are not allowed to assign this task", 403),
             );
         }
 
-        // Candidate check: the coach being assigned must be the owner or
-        // someone in the owner's management hierarchy.
-        const candidateIds = [ownerId, ...treeIds];
-        if (!candidateIds.includes(coachId.toString())) {
+        // Candidate check (permissive-only widening):
+        //   - removing a current assignee is always allowed;
+        //   - STAFF requesters may assign any staff member (or the owner);
+        //   - a regular user is still limited to the owner's hierarchy.
+        const coachIdStr = coachId.toString();
+        const isCurrentlyAssigned = task.assignedTo.some(
+            (id) => id.toString() === coachIdStr,
+        );
+        let candidateAllowed: boolean;
+        if (isCurrentlyAssigned) {
+            candidateAllowed = true;
+        } else if (STAFF_ROLES.includes(requester.role)) {
+            const candidate = await UserModel.findById(coachId).select(
+                "role active",
+            );
+            candidateAllowed =
+                !!candidate &&
+                candidate.active !== false &&
+                (STAFF_ROLES.includes(candidate.role) ||
+                    coachIdStr === ownerId);
+        } else {
+            candidateAllowed = [ownerId, ...treeIds].includes(coachIdStr);
+        }
+        if (!candidateAllowed) {
             return next(
                 new AppError("This user cannot be assigned to the task", 403),
             );
@@ -153,6 +258,8 @@ export const assignToCoach = catchAsync(
 // chain), and whether the current requester is permitted to change it. The
 // list is the same regardless of who is viewing, so a coach/admin editing a
 // task they were assigned to still sees the original owner's options.
+const ASSIGNEE_SELECT = "fullName photo role email updatedAt";
+
 export const getTaskAssignees = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const task = await TaskModel.findById(req.params.id);
@@ -160,24 +267,119 @@ export const getTaskAssignees = catchAsync(
             return next(new AppError("Task not found", 404));
         }
 
-        const owner = await UserModel.findById(task.user)
-            .select("fullName photo role email updatedAt")
-            .lean();
-
-        const hierarchy = await getFlattenedHierarchy(task.user);
-
-        // Owner first, then their flattened hierarchy.
-        const assignees = [...(owner ? [owner] : []), ...hierarchy];
-
         const ownerId = task.user.toString();
         const requesterId = req.user._id.toString();
-        const canAssign = assignees.some(
-            (u: any) => String(u._id) === requesterId,
-        );
 
+        // LEGACY path (the other app sends no ?page): unchanged response — the
+        // full owner + flattened-hierarchy list, shape { canAssign, assignees }.
+        if (req.query.page === undefined) {
+            const owner = await UserModel.findById(task.user)
+                .select(ASSIGNEE_SELECT)
+                .lean();
+            const hierarchy = await getFlattenedHierarchy(task.user);
+            const assignees = [...(owner ? [owner] : []), ...hierarchy];
+            const canAssign =
+                assignees.some((u: any) => String(u._id) === requesterId) ||
+                requesterId === ownerId;
+            return sendResponse(res, 200, "Assignees fetched", {
+                canAssign,
+                assignees,
+            });
+        }
+
+        // PAGINATED path (web). Candidate set depends on the REQUESTER's role:
+        // staff see all staff system-wide; a regular user keeps the owner's
+        // hierarchy. Already-assigned users are excluded (the client pins them
+        // on top from the task itself).
+        const search = (req.query.search || "").toString().trim();
+        const page = Math.max(
+            parseInt((req.query.page || "1").toString(), 10) || 1,
+            1,
+        );
+        const limit = 15;
+        const skip = (page - 1) * limit;
+
+        const treeIds = (await getManagementTreeIds(task.user)).map(String);
+        const isAssignee = task.assignedTo.some(
+            (id) => id.toString() === requesterId,
+        );
+        const canAssign =
+            requesterId === ownerId ||
+            treeIds.includes(requesterId) ||
+            isAssignee;
+
+        const assignedIds = task.assignedTo.map((id) => id.toString());
+
+        let assignees: any[] = [];
+        let totalCount = 0;
+
+        if (STAFF_ROLES.includes(req.user.role)) {
+            const searchFilter =
+                search.length > 0
+                    ? {
+                          $or: [
+                              { fullName: { $regex: search, $options: "i" } },
+                              { email: { $regex: search, $options: "i" } },
+                          ],
+                      }
+                    : {};
+            const [result] = await UserModel.aggregate([
+                {
+                    $match: {
+                        role: { $in: STAFF_ROLES },
+                        active: true,
+                        verified: true,
+                        _id: { $nin: task.assignedTo },
+                        ...searchFilter,
+                    },
+                },
+                {
+                    $facet: {
+                        data: [
+                            { $sort: { fullName: 1 } },
+                            { $skip: skip },
+                            { $limit: limit },
+                            {
+                                $project: {
+                                    fullName: 1,
+                                    photo: 1,
+                                    role: 1,
+                                    email: 1,
+                                    updatedAt: 1,
+                                },
+                            },
+                        ],
+                        meta: [{ $count: "total" }],
+                    },
+                },
+            ]);
+            assignees = result?.data || [];
+            totalCount = result?.meta?.[0]?.total || 0;
+        } else {
+            const owner = await UserModel.findById(task.user)
+                .select(ASSIGNEE_SELECT)
+                .lean();
+            const hierarchy = await getFlattenedHierarchy(task.user);
+            let candidates = [...(owner ? [owner] : []), ...hierarchy].filter(
+                (u: any) => !assignedIds.includes(String(u._id)),
+            );
+            if (search) {
+                const s = search.toLowerCase();
+                candidates = candidates.filter(
+                    (u: any) =>
+                        (u.fullName || "").toLowerCase().includes(s) ||
+                        (u.email || "").toLowerCase().includes(s),
+                );
+            }
+            totalCount = candidates.length;
+            assignees = candidates.slice(skip, skip + limit);
+        }
+
+        const totalPages = Math.max(1, Math.ceil(totalCount / limit));
         sendResponse(res, 200, "Assignees fetched", {
-            canAssign: canAssign || requesterId === ownerId,
+            canAssign,
             assignees,
+            meta: { totalCount, currentPage: page, limit, totalPages },
         });
     },
 );
@@ -378,20 +580,7 @@ export const getCoachTasks = catchAsync(
             category: { $ne: null },
         };
 
-        const features = new APIFeatures(
-            TaskModel.find(filter),
-            req.query as any,
-        )
-            .filter()
-            .sort()
-            .limitFields()
-            .search()
-            .populate();
-        features.query = features.query.populate("status").populate("category");
-
-        const raw = (await features.query) as any[];
-        const doc = raw.filter((t) => t?.status != null && t?.category != null);
-
+        const doc = await fetchTaskList(filter, req);
         sendResponse(res, 200, "Tasks retrieved successfully", doc);
     },
 );

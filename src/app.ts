@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from "express";
 import morgan from "morgan";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
+import compression from "compression";
 import mongoSanitize from "express-mongo-sanitize";
 import xss from "xss";
 
@@ -18,6 +19,10 @@ const app = express();
 // 1) GLOBAL Middleware
 // Set security HTTP headers
 app.use(helmet());
+
+// Gzip/deflate responses. List endpoints (e.g. tasks) return large JSON
+// payloads; compression shrinks them ~5-10x on the wire at negligible CPU cost.
+app.use(compression());
 
 // Development Logging
 console.log(process.env.NODE_ENV);

@@ -8,6 +8,7 @@ import {
     deleteTask,
     editTask,
     getCoachTasks,
+    getMyTasks,
     getTaskAssignees,
     importBulkTasks,
     updateSubtaskStatus,
@@ -23,12 +24,9 @@ router.use(protect);
 
 router
     .route("/")
-    .get(
-        factory.getAllUnpaginated(TaskModel, {
-            ownedOrAssignedToCurrentUser: true,
-            requirePopulated: ["status", "category"],
-        })
-    )
+    // Dedicated controller (not the generic factory) so the list uses a
+    // projected + lean populate — see getMyTasks / fetchTaskList.
+    .get(getMyTasks)
     .post(createTask);
 
 router.post(

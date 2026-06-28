@@ -89,6 +89,7 @@ class APIFeatures<T = any> {
             "search",
             "searchFields",
             "populate",
+            "slim",
         ];
         excludedFields.forEach((el) => delete queryObj[el]);
 
