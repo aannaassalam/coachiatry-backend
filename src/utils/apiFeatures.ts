@@ -41,6 +41,9 @@ class APIFeatures<T = any> {
         } else if (typeof obj === "string") {
             if (obj.toLowerCase() === "true") return true;
             if (obj.toLowerCase() === "false") return false;
+            // Lets clients express null filters (e.g. `dueDate=null` for
+            // "no due date", or `dueDate[ne]=null` for "has a due date").
+            if (obj.toLowerCase() === "null") return null;
             if (!isNaN(Number(obj)) && obj.trim() !== "") return Number(obj);
             return obj;
         }
