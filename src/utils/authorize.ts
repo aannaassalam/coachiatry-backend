@@ -92,3 +92,66 @@ export const authorizeChatMembership = (paramName = "roomId") =>
         }
         next();
     });
+
+// Can `requesterId` read this chat's contents? True if they are a member, OR
+// they hold a staff role (coach/manager/admin). Staff are trusted to view a
+// client's room they aren't a member of — this matches the app's role-gated
+// coach access model (see getClients / the coach REST routes). A regular user
+// still can't read a chat they don't belong to.
+//
+// NOTE: this used to require a management-hierarchy link (isOwnerOrManager over
+// the chat members) but that blocked legitimate managers/admins whenever the
+// upper `assignedCoach` links (coach → manager → admin) weren't fully populated
+// in the data. Re-tighten to a hierarchy check only once that data is
+// guaranteed complete.
+const STAFF_ROLES = ["admin", "manager", "coach"];
+export async function canAccessChat(
+    chatId: any,
+    requesterId: string,
+    role?: string,
+): Promise<boolean> {
+    if (!chatId) return false;
+    if (role && STAFF_ROLES.includes(role)) return true;
+    const chat = await ChatModel.findById(chatId).select("members.user");
+    if (!chat) return false;
+    const rid = requesterId.toString();
+    return chat.members.some((m: any) => m.user.toString() === rid);
+}
+
+// Route guard for coach/admin/manager "view a client's room" endpoints: allow
+// members and authorized supervisors, reject everyone else.
+export const authorizeChatAccess = (paramName = "roomId") =>
+    catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+        const ok = await canAccessChat(
+            req.params[paramName],
+            req.user._id.toString(),
+            req.user.role,
+        );
+        if (!ok) {
+            return next(
+                new AppError("You are not allowed to access this chat", 403),
+            );
+        }
+        next();
+    });
+
+// Route guard for coach endpoints keyed on a target userId (e.g. list a
+// client's conversations / scheduled messages): allow staff roles (matching the
+// app's role-gated coach model) or the target user / their manager. See the
+// note on canAccessChat about why a strict hierarchy-only check was relaxed.
+export const authorizeManagedUser = (paramName = "userId") =>
+    catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+        const isStaff = !!req.user.role && STAFF_ROLES.includes(req.user.role);
+        if (
+            isStaff ||
+            (await isOwnerOrManager(
+                req.params[paramName],
+                req.user._id.toString(),
+            ))
+        ) {
+            return next();
+        }
+        return next(
+            new AppError("You are not allowed to access this user's data", 403),
+        );
+    });

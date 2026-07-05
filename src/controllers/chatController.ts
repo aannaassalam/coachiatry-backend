@@ -891,14 +891,44 @@ export const leaveGroup = catchAsync(
         if (!currentGroup) {
             throw new AppError("Group not found", 404);
         }
+        if (currentGroup.type !== "group") {
+            return next(new AppError("You can only leave group chats", 400));
+        }
+
+        const leavingMember = currentGroup.members.find(
+            (m) => m.user.toString() === userId.toString(),
+        );
+        if (!leavingMember) {
+            return next(
+                new AppError("You are not a member of this group", 403),
+            );
+        }
+
+        const remaining = currentGroup.members.filter(
+            (m) => m.user.toString() !== userId.toString(),
+        );
+
+        // If the owner leaves, promote the earliest-joined remaining member so
+        // the group isn't orphaned without an owner (which would otherwise make
+        // edit/invite impossible).
+        if (
+            leavingMember.role === "owner" &&
+            remaining.length > 0 &&
+            !remaining.some((m) => m.role === "owner")
+        ) {
+            const successor = remaining
+                .slice()
+                .sort(
+                    (a, b) =>
+                        new Date(a.joinedAt as any).getTime() -
+                        new Date(b.joinedAt as any).getTime(),
+                )[0];
+            successor.role = "owner";
+        }
 
         const group = await ChatModel.findByIdAndUpdate(
             chatId,
-            {
-                members: currentGroup.members.filter(
-                    (m) => m.user.toString() !== userId.toString(),
-                ),
-            },
+            { members: remaining },
             { new: true },
         );
 

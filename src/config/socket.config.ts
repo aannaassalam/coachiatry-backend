@@ -1,6 +1,7 @@
 import { Server } from "socket.io";
 import type { Server as HTTPServer } from "http";
 import registerSocketHandlers from "../sockets";
+import { authenticateChatSocket } from "../sockets/chat.socket";
 import meetSocket, {
     authenticateMeetSocket,
 } from "../sockets/meet.socket";
@@ -11,6 +12,10 @@ function initSocket(server: HTTPServer) {
     io = new Server(server, {
         cors: { origin: "*" }, // configure properly in prod
     });
+
+    // Chat (default namespace) now requires the same JWT as the REST API.
+    // Client must connect with `auth: { token }`.
+    io.use(authenticateChatSocket);
 
     io.on("connection", (socket) => {
         console.log("🔥 New client connected:", socket.id);

@@ -15,14 +15,22 @@ export const getMessages = catchAsync(
             return next(new AppError("No Room provided", 401));
         }
 
-        if (!(await isChatMember(room, req.user._id))) {
-            return next(
-                new AppError("You are not a member of this chat", 403),
-            );
-        }
+        // NOTE: membership is enforced by route middleware
+        // (`authorizeChatMembership`) on the user-facing route. Coach/admin/
+        // manager routes are role-gated instead, so they can legitimately read
+        // a client's room without being a member. Mirrors the chat router.
 
-        const page = parseInt((req.query.page as string) || "1", 10);
-        const limit = parseInt((req.query.limit as string) || "20", 10);
+        // Clamp pagination: floor page/limit at 1, cap limit so a request like
+        // ?limit=1000000 can't pull everything into memory, and a non-numeric
+        // value can't produce a NaN skip (→ 500).
+        const page = Math.max(
+            1,
+            parseInt((req.query.page as string) || "1", 10) || 1,
+        );
+        const limit = Math.min(
+            100,
+            Math.max(1, parseInt((req.query.limit as string) || "20", 10) || 20),
+        );
         const skip = (page - 1) * limit;
 
         // pipeline
@@ -186,6 +194,14 @@ export const editScheduleMessage = catchAsync(
                 new AppError("You are not allowed to edit this message", 403),
             );
         }
+        // Only genuine scheduled drafts are editable. Without this, passing an
+        // already-delivered message's id would stamp scheduledAt on it and
+        // queue it to be sent again.
+        if (!existing.scheduledAt) {
+            return next(
+                new AppError("This message is not scheduled", 400),
+            );
+        }
 
         const msg = await MessageModel.findByIdAndUpdate(
             messageId,
@@ -211,8 +227,17 @@ export const getScheduleMessages = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const userId = req.user?._id;
 
-        const page = parseInt((req.query.page as string) || "1", 10);
-        const limit = parseInt((req.query.limit as string) || "20", 10);
+        // Clamp pagination: floor page/limit at 1, cap limit so a request like
+        // ?limit=1000000 can't pull everything into memory, and a non-numeric
+        // value can't produce a NaN skip (→ 500).
+        const page = Math.max(
+            1,
+            parseInt((req.query.page as string) || "1", 10) || 1,
+        );
+        const limit = Math.min(
+            100,
+            Math.max(1, parseInt((req.query.limit as string) || "20", 10) || 20),
+        );
         const skip = (page - 1) * limit;
 
         // pipeline
@@ -366,8 +391,17 @@ export const getScheduleMessagesByCoach = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const userId = req.params.userId;
 
-        const page = parseInt((req.query.page as string) || "1", 10);
-        const limit = parseInt((req.query.limit as string) || "20", 10);
+        // Clamp pagination: floor page/limit at 1, cap limit so a request like
+        // ?limit=1000000 can't pull everything into memory, and a non-numeric
+        // value can't produce a NaN skip (→ 500).
+        const page = Math.max(
+            1,
+            parseInt((req.query.page as string) || "1", 10) || 1,
+        );
+        const limit = Math.min(
+            100,
+            Math.max(1, parseInt((req.query.limit as string) || "20", 10) || 20),
+        );
         const skip = (page - 1) * limit;
 
         // pipeline

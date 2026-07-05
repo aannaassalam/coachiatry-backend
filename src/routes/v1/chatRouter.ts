@@ -20,7 +20,11 @@ import {
 } from "../../controllers/chatController";
 import upload from "../../utils/multerConfig";
 import { getUsersById } from "../../controllers/userController";
-import { authorizeChatMembership } from "../../utils/authorize";
+import {
+    authorizeChatAccess,
+    authorizeChatMembership,
+    authorizeManagedUser,
+} from "../../utils/authorize";
 
 const router = express.Router();
 router.use(protect);
@@ -29,11 +33,13 @@ router.get("/", getAllConversations);
 router.get(
     "/coach/:userId",
     restrictTo("admin", "manager", "coach"),
+    authorizeManagedUser("userId"),
     getAllConversationsByCoach
 );
 router.get(
     "/coach/room/:roomId",
     restrictTo("admin", "manager", "coach"),
+    authorizeChatAccess("roomId"),
     getConversation
 );
 
