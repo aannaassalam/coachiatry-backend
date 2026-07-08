@@ -82,69 +82,88 @@ async function broadcastPresence(
     }
 }
 
+// Register the socket's authenticated owner as online: track it in `onlineUsers`,
+// join its `user:<id>` room, sweep undelivered messages, and broadcast presence.
+// Idempotent — safe to call more than once for the same socket.
+async function markUserOnline(io: Server, socket: Socket) {
+    // Identity is the verified socket owner — never trust a client payload.
+    const userId: string | undefined = socket.data.userId;
+    if (!userId) return;
+
+    // Clean up any previous mapping for this socket (e.g. re-emitted user_online)
+    const prevUserId = socketToUser.get(socket.id);
+    if (prevUserId && prevUserId !== userId) {
+        onlineUsers.get(prevUserId)?.delete(socket.id);
+        if (!onlineUsers.get(prevUserId)?.size) {
+            onlineUsers.delete(prevUserId);
+        }
+        socket.leave(`user:${prevUserId}`);
+    }
+
+    // Already tracked for this socket → nothing new to do (avoids a redundant
+    // delivered-sweep + presence broadcast when both connect and an explicit
+    // user_online fire).
+    if (onlineUsers.get(userId)?.has(socket.id)) return;
+
+    if (!onlineUsers.has(userId)) {
+        onlineUsers.set(userId, new Set());
+    }
+    onlineUsers.get(userId)!.add(socket.id);
+    socketToUser.set(socket.id, userId);
+    socket.data.userId = userId;
+
+    // Join a user-specific room so all devices for this user receive events
+    socket.join(`user:${userId}`);
+
+    // Verify the socket actually joined the room
+    const roomMembers = await io.in(`user:${userId}`).fetchSockets();
+    console.log(
+        `🟢 User online: ${userId}, socket: ${socket.id}, rooms: [${[...socket.rooms]}], user room size: ${roomMembers.length}`,
+    );
+
+    // Mark undelivered messages delivered — but at most once per debounce
+    // window per user, so rapid reconnects don't hammer the DB.
+    const now = Date.now();
+    if (now - (lastDeliveredSweep.get(userId) ?? 0) > DELIVERED_SWEEP_DEBOUNCE_MS) {
+        lastDeliveredSweep.set(userId, now);
+
+        const userObjectId =
+            mongoose.Types.ObjectId.createFromHexString(userId);
+
+        const chats = await ChatModel.find({
+            "members.user": userObjectId,
+        }).select("_id");
+        const chatIds = chats.map((c) => c._id);
+
+        if (chatIds.length > 0) {
+            const result = await MessageModel.updateMany(
+                {
+                    chat: { $in: chatIds },
+                    sender: { $ne: userId },
+                    status: "sent",
+                },
+                { $set: { status: "delivered" } },
+            );
+
+            console.log("✅ Delivered update count:", result.modifiedCount);
+        }
+    }
+
+    await broadcastPresence(io, userId, "online");
+}
+
 export default (io: Server, socket: Socket) => {
     console.log("Chat socket ready for:", socket.id);
 
-    socket.on("user_online", async () => {
-        // Identity is the verified socket owner — never trust a client payload.
-        const userId: string | undefined = socket.data.userId;
-        if (!userId) return;
+    // Mark online as soon as an authenticated socket connects, instead of waiting
+    // for the client to emit `user_online`. A client that connects but never
+    // emits it (e.g. a mobile build) would otherwise stay invisible — showing as
+    // offline to everyone else even while connected.
+    void markUserOnline(io, socket);
 
-        // Clean up any previous mapping for this socket (e.g. re-emitted user_online)
-        const prevUserId = socketToUser.get(socket.id);
-        if (prevUserId && prevUserId !== userId) {
-            onlineUsers.get(prevUserId)?.delete(socket.id);
-            if (!onlineUsers.get(prevUserId)?.size) {
-                onlineUsers.delete(prevUserId);
-            }
-            socket.leave(`user:${prevUserId}`);
-        }
-
-        if (!onlineUsers.has(userId)) {
-            onlineUsers.set(userId, new Set());
-        }
-        onlineUsers.get(userId)!.add(socket.id);
-        socketToUser.set(socket.id, userId);
-        socket.data.userId = userId;
-
-        // Join a user-specific room so all devices for this user receive events
-        socket.join(`user:${userId}`);
-
-        // Verify the socket actually joined the room
-        const roomMembers = await io.in(`user:${userId}`).fetchSockets();
-        console.log(
-            `🟢 User online: ${userId}, socket: ${socket.id}, rooms: [${[...socket.rooms]}], user room size: ${roomMembers.length}`,
-        );
-
-        // Mark undelivered messages delivered — but at most once per debounce
-        // window per user, so rapid reconnects don't hammer the DB.
-        const now = Date.now();
-        if (now - (lastDeliveredSweep.get(userId) ?? 0) > DELIVERED_SWEEP_DEBOUNCE_MS) {
-            lastDeliveredSweep.set(userId, now);
-
-            const userObjectId =
-                mongoose.Types.ObjectId.createFromHexString(userId);
-
-            const chats = await ChatModel.find({
-                "members.user": userObjectId,
-            }).select("_id");
-            const chatIds = chats.map((c) => c._id);
-
-            if (chatIds.length > 0) {
-                const result = await MessageModel.updateMany(
-                    {
-                        chat: { $in: chatIds },
-                        sender: { $ne: userId },
-                        status: "sent",
-                    },
-                    { $set: { status: "delivered" } },
-                );
-
-                console.log("✅ Delivered update count:", result.modifiedCount);
-            }
-        }
-
-        await broadcastPresence(io, userId, "online");
+    // Kept for backward compatibility and explicit reconnect re-emits; idempotent.
+    socket.on("user_online", () => {
+        void markUserOnline(io, socket);
     });
 
     // Join room

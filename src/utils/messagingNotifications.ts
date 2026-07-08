@@ -46,7 +46,21 @@ export const sendMessageNotification = async ({
     const deviceTokens = users
         .flatMap((u) => u.fcmTokens || [])
         .filter(Boolean);
-    if (deviceTokens.length === 0) return;
+    if (deviceTokens.length === 0) {
+        // The single most useful line for diagnosing "no notifications": it means
+        // no recipient has a registered FCM token, so nothing can be delivered.
+        console.warn(
+            `[push] chat ${chatId}: NO fcm tokens across ${recipients.length} ` +
+                `recipient(s) [${recipients
+                    .map((r) => r.user.toString())
+                    .join(", ")}] — token registration is failing on the client.`,
+        );
+        return;
+    }
+    console.log(
+        `[push] chat ${chatId}: sending to ${deviceTokens.length} token(s) ` +
+            `across ${recipients.length} recipient(s)`,
+    );
 
     const isGroup = chat.type === "group";
     const senderName = senderUser?.fullName || "Someone";
@@ -111,6 +125,24 @@ export const sendMessageNotification = async ({
             android: {
                 priority: "high",
                 collapseKey: `chat-${chatId.toString()}`,
+                // Include a notification block so the OS renders it directly
+                // when the app is backgrounded or killed. The old data-only
+                // approach relied on the app's headless JS + notifee to draw
+                // the banner, which is unreliable on Android (the headless task
+                // is often killed before notifee finishes). The client skips
+                // notifee in the Android background handler to avoid a
+                // duplicate; the foreground path still draws the rich
+                // MESSAGING notification via onMessage (FCM does not
+                // auto-display while the app is in the foreground).
+                notification: {
+                    title: chatName,
+                    body: isGroup ? `${senderName}: ${body}` : body,
+                    channelId: "chat-messages",
+                    sound: "default",
+                    icon: "ic_notification",
+                    color: "#0E1734",
+                    tag: `chat-${chatId.toString()}`,
+                },
             },
             apns: {
                 headers: {
