@@ -21,6 +21,8 @@ export interface IChatDocument extends Document {
         sentAt: Date;
         status: "pending" | "sent" | "delivered" | "seen" | "failed";
     } | null;
+    /** Newest real message's time, defaulting to the chat's creation time. */
+    lastMessageAt: Date;
     isDeletable?: Boolean;
     createdAt: Date;
     updatedAt: Date;

@@ -22,7 +22,10 @@ import TaskModel from "../model/taskModel";
 import DocumentModel from "../model/documentModel";
 import CategoryModel from "../model/categoryModel";
 import StatusModel from "../model/statusModel";
+import ChatModel from "../model/chatModel";
+import MessageModel from "../model/messageModel";
 import { protect } from "../controllers/authController";
+import { getAllConversations } from "../controllers/chatController";
 import { buildContext } from "../ai/context";
 import { getManagementTreeIds } from "../utils/hierarchy";
 import { getCacheClient, closeRedis } from "../utils/redis";
@@ -156,8 +159,120 @@ async function main() {
     compBefore.perOp -= delCost.perOp;
     report(compBefore, compAfter);
 
+    // ── 5. Conversation list ────────────────────────────────────────────────
+    console.log("5. Conversation list — every app open + every incoming message");
+    {
+        const N_CHATS = 100;
+        const MSGS_PER_CHAT = 40;
+        const peer = await UserModel.create({ fullName: "Peer", email: "p@x.com", verified: true });
+
+        const chats = await ChatModel.insertMany(
+            Array.from({ length: N_CHATS }, () => ({
+                type: "direct", createdBy: user._id,
+                members: [{ user: user._id, lastReadAt: new Date(Date.now() - 86400_000) }, { user: peer._id }],
+            })) as any
+        );
+        const msgs: any[] = [];
+        chats.forEach((c: any, ci: number) => {
+            for (let i = 0; i < MSGS_PER_CHAT; i++) {
+                msgs.push({
+                    chat: c._id, sender: peer._id, content: `m${i}`,
+                    type: "text", status: "sent", scheduledAt: null,
+                });
+            }
+        });
+        await MessageModel.insertMany(msgs);
+        // Seed the sort key as the backfill migration would.
+        for (const c of chats as any[]) {
+            const [newest] = await MessageModel.find({ chat: c._id, scheduledAt: null }, { createdAt: 1 })
+                .sort({ createdAt: -1 }).limit(1).lean();
+            await ChatModel.collection.updateOne({ _id: c._id }, { $set: { lastMessageAt: (newest as any)?.createdAt ?? new Date() } });
+        }
+        await ChatModel.syncIndexes();
+        console.log(`   (${N_CHATS} chats x ${MSGS_PER_CHAT} messages, fetching page 1 of 20)`);
+
+        const listBefore = await time("old", 8, () => oldConversationList(user._id, 1, 20));
+        const listAfter = await time("new", 8, () => newConversationList(user, {}));
+        report(listBefore, listAfter);
+    }
+
     await client.flushdb();
     await closeRedis();
+}
+
+/** The pre-change pipeline, for comparison. */
+async function oldConversationList(userId: any, page: number, limit: number) {
+    const userOid = mongoose.Types.ObjectId.createFromHexString(userId.toString());
+    const skip = (page - 1) * limit;
+    return ChatModel.aggregate([
+        { $match: { "members.user": userOid } },
+        {
+            $lookup: {
+                from: "users", localField: "members.user", foreignField: "_id",
+                pipeline: [{ $project: { password: 0, otp: 0, otpExpires: 0, passwordResetToken: 0, passwordResetExpires: 0 } }],
+                as: "memberUsers",
+            },
+        },
+        {
+            $facet: {
+                data: [
+                    { $addFields: { myData: { $first: { $filter: { input: "$members", as: "m", cond: { $eq: ["$$m.user", userOid] } } } } } },
+                    {
+                        $lookup: {
+                            from: "messages", let: { chatId: "$_id" },
+                            pipeline: [
+                                { $match: { $expr: { $eq: ["$chat", "$$chatId"] }, scheduledAt: null } },
+                                { $sort: { createdAt: -1 } }, { $limit: 1 },
+                            ],
+                            as: "lastMessage",
+                        },
+                    },
+                    { $unwind: { path: "$lastMessage", preserveNullAndEmptyArrays: true } },
+                    {
+                        $lookup: {
+                            from: "users", localField: "lastMessage.sender", foreignField: "_id",
+                            pipeline: [{ $project: { password: 0 } }], as: "lastMessage.sender",
+                        },
+                    },
+                    { $unwind: { path: "$lastMessage.sender", preserveNullAndEmptyArrays: true } },
+                    {
+                        $lookup: {
+                            from: "messages", let: { chatId: "$_id", lastSeen: "$myData.lastReadAt" },
+                            pipeline: [
+                                {
+                                    $match: {
+                                        $expr: {
+                                            $and: [
+                                                { $eq: ["$chat", "$$chatId"] },
+                                                { $ne: ["$sender", userOid] },
+                                                { $gt: ["$createdAt", { $ifNull: ["$$lastSeen", new Date(0)] }] },
+                                            ],
+                                        },
+                                    },
+                                },
+                                { $count: "unreadCount" },
+                            ],
+                            as: "unread",
+                        },
+                    },
+                    { $addFields: { unreadCount: { $ifNull: [{ $arrayElemAt: ["$unread.unreadCount", 0] }, 0] } } },
+                    { $project: { memberUsers: 0, unread: 0, myData: 0 } },
+                    { $addFields: { sortTimestamp: { $ifNull: ["$lastMessage.createdAt", "$createdAt"] } } },
+                    { $sort: { sortTimestamp: -1 } },
+                    { $skip: skip }, { $limit: limit },
+                ],
+                totalCount: [{ $count: "count" }],
+            },
+        },
+    ]);
+}
+
+function newConversationList(user: any, query: any): Promise<any> {
+    return new Promise((resolve) => {
+        const req: any = { user, query };
+        const res: any = { status: () => res, json: (b: any) => resolve(b), set: () => res };
+        getAllConversations(req, res, (() => resolve(null)) as any);
+    });
 }
 
 main()

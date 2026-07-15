@@ -7,6 +7,7 @@ import UserModel from "../model/userModel";
 import admin from "../utils/firebaseAdmin";
 import { canAccessChat, isChatMember } from "../utils/authorize";
 import { sendMessageNotification } from "../utils/messagingNotifications";
+import { touchChatLastMessage } from "../utils/chatActivity";
 import {
     addSocket,
     claimDeliveredSweep,
@@ -279,32 +280,15 @@ export default (io: Server, socket: Socket) => {
 
             const chatIdStr = data.chat.toString();
 
-            // Update lastMessage on the chat document — but only if this message
-            // is newer than the current lastMessage, so two near-simultaneous
-            // sends can't leave the older one as the stored preview (last DB
-            // write would otherwise win regardless of chronological order).
-            await ChatModel.updateOne(
-                {
-                    _id: data.chat,
-                    $or: [
-                        { lastMessage: { $exists: false } },
-                        { "lastMessage.sentAt": null },
-                        { "lastMessage.sentAt": { $lt: message.createdAt } },
-                    ],
-                },
-                {
-                    $set: {
-                        lastMessage: {
-                            message: message._id,
-                            sender: message.sender,
-                            content: message.content,
-                            type: message.type,
-                            status: populatedMessage.status,
-                            sentAt: message.createdAt,
-                        },
-                    },
-                },
-            );
+            await touchChatLastMessage({
+                _id: message._id,
+                chat: data.chat,
+                sender: message.sender,
+                content: message.content,
+                type: message.type,
+                status: populatedMessage.status,
+                createdAt: message.createdAt,
+            });
 
             // Emit new_message to everyone in the chat room
             io.to(chatIdStr).emit("new_message", {

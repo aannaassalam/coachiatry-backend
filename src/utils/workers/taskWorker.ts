@@ -7,6 +7,7 @@ import ChatModel from "../../model/chatModel";
 import moment from "moment";
 import { taskQueue } from "../queues/taskQueue";
 import { sendMessageNotification } from "../messagingNotifications";
+import { touchChatLastMessage } from "../chatActivity";
 
 export function getNextOccurrence(current: Date, repeat: string): Date {
     const next = new Date(current);
@@ -53,6 +54,18 @@ export const taskWorker = new Worker(
             type: "text",
             status: "delivered",
         });
+        // Task reminders are real messages in the chat, so they are the chat's
+        // latest activity too — this worker never updated the chat document.
+        await touchChatLastMessage({
+            _id: sentMessage._id,
+            chat: sentMessage.chat,
+            sender: sentMessage.sender,
+            content: sentMessage.content,
+            type: sentMessage.type,
+            status: sentMessage.status,
+            createdAt: sentMessage.createdAt,
+        });
+
         sendMessageNotification({
             chatId: sentMessage.chat.toString(),
             senderId: sentMessage.sender.toString(),

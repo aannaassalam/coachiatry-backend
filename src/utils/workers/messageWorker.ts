@@ -4,6 +4,7 @@ import MessageModel from "../../model/messageModel";
 import { messageQueue } from "../queues/messageQueue";
 import { redisConnection } from "../redis";
 import { sendMessageNotification } from "../messagingNotifications";
+import { touchChatLastMessage } from "../chatActivity";
 
 function getNextOccurrence(current: Date, repeat: string): Date {
     const next = new Date(current);
@@ -74,6 +75,21 @@ export const messageWorker = new Worker(
 
             sentMessage = template;
         }
+        // The scheduled message has now actually been sent, so it becomes the
+        // chat's latest activity. Without this the conversation list would show
+        // (and order by) the previous message, and a chat whose only traffic is
+        // scheduled would never move — this worker never touched the chat
+        // document before.
+        await touchChatLastMessage({
+            _id: sentMessage._id,
+            chat: sentMessage.chat,
+            sender: sentMessage.sender,
+            content: sentMessage.content,
+            type: sentMessage.type,
+            status: sentMessage.status,
+            createdAt: sentMessage.createdAt,
+        });
+
         sendMessageNotification({
             chatId: template.chat.toString(),
             senderId: template.sender.toString(),

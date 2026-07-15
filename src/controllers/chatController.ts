@@ -61,33 +61,55 @@ export const getAllConversations = catchAsync(
         const rawSearch = (req.query.search as string) || "";
         const search = rawSearch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-        // Shared stages: match → lookup members → optional search filter
+        // ── Pipeline shape ──────────────────────────────────────────────────
+        // The expensive stages here are per-chat: a $lookup for the last
+        // message and a correlated $count for unread, each evaluated once per
+        // chat document that reaches them. They used to run for EVERY chat the
+        // user belongs to, because the sort was on a computed field
+        // ($ifNull(lastMessage.createdAt, createdAt)) which no index can serve —
+        // so Mongo had to build and sort the whole set before it could take a
+        // page of 20. A user in 100 chats paid 200 sub-pipelines to render 20
+        // rows, on every app open and after every incoming message.
+        //
+        // Now `lastMessageAt` is a stored, indexed field, so the sort and the
+        // page can be applied FIRST and the per-chat work only runs for the 20
+        // rows actually being returned. The output shape is unchanged.
+        //
+        // Search is the exception: it filters on joined member names, so the
+        // join has to happen before the filter, and the page can only be cut
+        // afterwards. That path keeps the old ordering (still on the indexed
+        // field) and simply costs more — it is a rarer, user-initiated action,
+        // not the every-load path.
+        const memberLookup: PipelineStage.Lookup = {
+            $lookup: {
+                from: "users",
+                localField: "members.user",
+                foreignField: "_id",
+                pipeline: [
+                    {
+                        $project: {
+                            password: 0,
+                            otp: 0,
+                            otpExpires: 0,
+                            passwordResetToken: 0,
+                            passwordResetExpires: 0,
+                        },
+                    },
+                ],
+                as: "memberUsers",
+            },
+        };
+
+        // Stages that narrow the candidate set. Without a search this is just
+        // the indexed match, which the {members.user, lastMessageAt} index then
+        // walks in sort order.
         const baseStages: PipelineStage[] = [
             { $match: { "members.user": userOid } },
-            {
-                $lookup: {
-                    from: "users",
-                    localField: "members.user",
-                    foreignField: "_id",
-                    pipeline: [
-                        {
-                            $project: {
-                                password: 0,
-                                otp: 0,
-                                otpExpires: 0,
-                                passwordResetToken: 0,
-                                passwordResetExpires: 0,
-                            },
-                        },
-                    ],
-                    as: "memberUsers",
-                },
-            },
         ];
 
         if (search) {
             const searchRegex = new RegExp(search, "i");
-            baseStages.push({
+            baseStages.push(memberLookup, {
                 $match: {
                     $or: [
                         {
@@ -108,6 +130,13 @@ export const getAllConversations = catchAsync(
             });
         }
 
+        // Cut to the page before any per-chat work happens.
+        const paginateStages: PipelineStage.FacetPipelineStage[] = [
+            { $sort: { lastMessageAt: -1 } },
+            { $skip: skip },
+            { $limit: limit },
+        ];
+
         // Single aggregation with $facet for data + count
         const result = await ChatModel.aggregate([
             ...baseStages,
@@ -115,6 +144,12 @@ export const getAllConversations = catchAsync(
             {
                 $facet: {
                     data: [
+                        ...paginateStages,
+                        // Joined here (not in baseStages) so member documents
+                        // are only fetched for the page. A 500-member group
+                        // otherwise hydrated 500 users per chat, for every chat.
+                        ...(search ? [] : [memberLookup]),
+
                         // Extract current user's membership info
                         {
                             $addFields: {
@@ -302,19 +337,11 @@ export const getAllConversations = catchAsync(
                             },
                         },
 
-                        {
-                            $addFields: {
-                                sortTimestamp: {
-                                    $ifNull: [
-                                        "$lastMessage.createdAt",
-                                        "$createdAt",
-                                    ],
-                                },
-                            },
-                        },
-                        { $sort: { sortTimestamp: -1 } },
-                        { $skip: skip },
-                        { $limit: limit },
+                        // No sort/skip/limit here: the rows arrived already
+                        // ordered and paginated by the indexed $sort above. The
+                        // computed sortTimestamp this replaces could not use an
+                        // index, so Mongo had to materialise and sort every one
+                        // of the user's chats before it could take a page.
                     ],
 
                     totalCount: [{ $count: "count" }],
@@ -459,6 +486,15 @@ export const getAllConversationsByCoach = catchAsync(
             {
                 $facet: {
                     data: [
+                        // Same restructure as getAllConversations: sort and cut
+                        // the page on the indexed `lastMessageAt` FIRST, so the
+                        // per-chat last-message and unread lookups below only run
+                        // for the 20 rows being returned rather than for every
+                        // chat this user is in.
+                        { $sort: { lastMessageAt: -1 } },
+                        { $skip: skip },
+                        { $limit: limit },
+
                         // Extract current user's membership info
                         {
                             $addFields: {
@@ -645,19 +681,7 @@ export const getAllConversationsByCoach = catchAsync(
                             },
                         },
 
-                        {
-                            $addFields: {
-                                sortTimestamp: {
-                                    $ifNull: [
-                                        "$lastMessage.createdAt",
-                                        "$createdAt",
-                                    ],
-                                },
-                            },
-                        },
-                        { $sort: { sortTimestamp: -1 } },
-                        { $skip: skip },
-                        { $limit: limit },
+                        // Already ordered and paginated above by the index.
                     ],
 
                     totalCount: [{ $count: "count" }],
