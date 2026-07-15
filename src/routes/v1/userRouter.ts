@@ -8,6 +8,7 @@ import {
     addWatchersById,
     addWatchersByLink,
     createUserByHierarchy,
+    deleteMyAccount,
     deleteUserSoft,
     getAllUsers,
     getAllWatching,
@@ -30,7 +31,8 @@ router.use(protect);
 router
     .route("/me")
     .get(getMe)
-    .patch(injectUserId, validateUserUpdate, factory.updateOne(UserModel));
+    .patch(injectUserId, validateUserUpdate, factory.updateOne(UserModel))
+    .delete(deleteMyAccount);
 
 router.patch(
     "/me/update-profile-picture",

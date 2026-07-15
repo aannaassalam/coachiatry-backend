@@ -1159,6 +1159,32 @@ export const updateUserByHierarchy = catchAsync(
     },
 );
 
+// Self-service account deletion: the authenticated user deactivates their own
+// account. Soft delete (active:false) mirrors deleteUserSoft — it frees the
+// email for re-registration (the unique index is partial on active+verified),
+// keeps the user out of every listing/lookup, and blocks login (correctPassword
+// short-circuits on inactive accounts). We also clear FCM tokens so no further
+// push notifications are delivered.
+export const deleteMyAccount = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const userId = req.user._id;
+
+        const updated = await UserModel.findOneAndUpdate(
+            { _id: userId, active: true },
+            { $set: { active: false, fcmTokens: [] } },
+            { new: true },
+        ).select(
+            "-password -otp -otpExpires -passwordResetToken -passwordResetExpires -__v",
+        );
+
+        if (!updated) {
+            throw new AppError("Account not found or already deleted", 404);
+        }
+
+        sendResponse(res, 200, "Account deleted successfully", updated);
+    },
+);
+
 export const deleteUserSoft = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const requesterRole = req.user.role;

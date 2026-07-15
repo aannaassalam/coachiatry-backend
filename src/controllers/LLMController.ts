@@ -7,7 +7,7 @@ import {
     buildToolDeclarations,
     createTranscriptsTasksDeclaration,
 } from "../ai/tools";
-import { intentPrompt } from "../ai/intent";
+import { classifyIntent } from "../ai/intent";
 import {
     sanitizeHtml,
     sanitizeDocumentHtml,
@@ -24,7 +24,7 @@ import {
 } from "../ai/handlers";
 import TranscriptionModel from "../model/transcriptionModel";
 import { loadTranscriptSegments } from "../services/transcriptSegments.service";
-import CategoryModel from "../model/categoryModel";
+import { findCategoriesCached } from "../utils/referenceData";
 import TaskModel from "../model/taskModel";
 import DocumentModel from "../model/documentModel";
 import { taskQueue } from "../utils/queues/taskQueue";
@@ -274,30 +274,11 @@ export const aiController = catchAsync(
             chatDateFrom,
         });
 
-        // Intent detection
-        const intentResponse = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: [
-                {
-                    role: "user",
-                    parts: [
-                        { text: `${intentPrompt}\n\nUser query: ${query}` },
-                    ],
-                },
-            ],
-        });
-
-        const intentText =
-            (intentResponse as any).text ||
-            (intentResponse as any).candidates?.[0]?.content?.parts
-                ?.map((p: any) => p.text ?? "")
-                .join("") ||
-            '{ "action": "chat" }';
-
-        let inferredAction = "chat";
-        try {
-            inferredAction = JSON.parse(intentText).action || "chat";
-        } catch {}
+        // Intent detection (cached — see classifyIntent)
+        const inferredAction = await classifyIntent(
+            (args) => ai.models.generateContent(args as any),
+            query
+        );
         const chosenAction = String(explicitAction ?? inferredAction);
 
         // Conversation grounding: include last turns from session
@@ -815,9 +796,9 @@ export const transcriptionAIController = catchAsync(
                 _id: transcriptionId,
                 user: userId,
             }).lean(),
-            CategoryModel.find({
+            findCategoriesCached({
                 $or: [{ public: true, user: null }, { user: userId }],
-            }).lean(),
+            }),
         ]);
 
         if (!doc) {
@@ -1384,38 +1365,12 @@ export const aiNativeController = catchAsync(
         });
 
         // ------------------------------------------------------------
-        // INTENT DETECTION (self-healing fallback)
+        // INTENT DETECTION (cached; self-healing fallback to "chat")
         // ------------------------------------------------------------
-        let inferredAction = "chat";
-
-        try {
-            const intentResponse = await ai.models.generateContent({
-                model: "gemini-2.5-flash",
-                contents: [
-                    {
-                        role: "user",
-                        parts: [
-                            { text: `${intentPrompt}\n\nUser query: ${query}` },
-                        ],
-                    },
-                ],
-            });
-
-            const intentText =
-                (intentResponse as any).text ||
-                (intentResponse as any).candidates?.[0]?.content?.parts
-                    ?.map((p: any) => p.text ?? "")
-                    .join("") ||
-                `{ "action": "chat" }`;
-
-            try {
-                inferredAction = JSON.parse(intentText).action || "chat";
-            } catch {
-                inferredAction = "chat";
-            }
-        } catch (err) {
-            inferredAction = "chat";
-        }
+        const inferredAction = await classifyIntent(
+            (args) => ai.models.generateContent(args as any),
+            query
+        );
 
         const chosenAction = String(explicitAction ?? inferredAction);
         const effectiveAction =

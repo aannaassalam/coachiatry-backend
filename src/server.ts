@@ -8,7 +8,15 @@ import socket from "./config/socket.config";
 
 import "./utils/workers/messageWorker";
 import "./utils/workers/taskWorker";
-import { verifyRedisConnection } from "./utils/redis";
+import { closeRedis, verifyRedisConnection } from "./utils/redis";
+import {
+    clearLocalPresence,
+    stopPresenceHeartbeat,
+} from "./utils/presence";
+import { registerReferenceInvalidation } from "./utils/referenceData";
+
+// Must run before any category/status write, so the cache can't outlive an edit.
+registerReferenceInvalidation();
 
 const PORT = process.env.PORT || 3001;
 
@@ -76,11 +84,21 @@ async function bootstrap() {
 
     const gracefulShutdown = async () => {
         console.log("Received shutdown signal. Shutting down Gracefully.");
-        await dbConnection.disconnect();
+
+        // Presence first, and before Redis closes: drop this instance's sockets
+        // from the shared sets so its users aren't shown online until their
+        // entries age out.
+        stopPresenceHeartbeat();
+        await clearLocalPresence();
+
         const io = socket.getIO();
         if (io) {
             io.close(() => console.log("Socket server closed."));
         }
+        await socket.closeAdapterClients();
+
+        await dbConnection.disconnect();
+        await closeRedis();
         server.close(() => {
             console.log("HTTP server closed.");
             process.exit(1);

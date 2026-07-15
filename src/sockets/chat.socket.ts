@@ -7,18 +7,28 @@ import UserModel from "../model/userModel";
 import admin from "../utils/firebaseAdmin";
 import { canAccessChat, isChatMember } from "../utils/authorize";
 import { sendMessageNotification } from "../utils/messagingNotifications";
+import {
+    addSocket,
+    claimDeliveredSweep,
+    isAnyUserOnline,
+    isUserOnline,
+    releaseDeliveredSweep,
+    removeSocket,
+} from "../utils/presence";
 
-// Track which users are online (for status checks like "is friend online?")
-const onlineUsers = new Map<string, Set<string>>();
-const socketToUser = new Map<string, string>();
+// Presence used to live in process-local Maps here. It now lives in Redis (see
+// utils/presence.ts) because sockets for one user can be spread across
+// instances: the local view reported a user with a phone on instance A and a
+// laptop on instance B as offline whenever either disconnected, and marked
+// messages undelivered for recipients who were connected elsewhere.
 
 // Debounce the "mark undelivered messages delivered" sweep per user. Mobile
 // sockets reconnect frequently (network flapping), and each user_online would
-// otherwise run a full scan/updateMany across all the user's chats. The entry
-// is cleared when the user goes fully offline, so a genuine return from offline
-// sweeps immediately.
-const lastDeliveredSweep = new Map<string, number>();
-const DELIVERED_SWEEP_DEBOUNCE_MS = 30_000;
+// otherwise run a full scan/updateMany across all the user's chats. The claim
+// is held in Redis so the sweep runs once per window across the fleet rather
+// than once per window per instance. It is released when the user goes fully
+// offline, so a genuine return from offline sweeps immediately.
+const DELIVERED_SWEEP_DEBOUNCE_SEC = 30;
 
 /**
  * Namespace auth middleware for chat sockets. Mirrors the /meet namespace.
@@ -90,43 +100,25 @@ async function markUserOnline(io: Server, socket: Socket) {
     const userId: string | undefined = socket.data.userId;
     if (!userId) return;
 
-    // Clean up any previous mapping for this socket (e.g. re-emitted user_online)
-    const prevUserId = socketToUser.get(socket.id);
-    if (prevUserId && prevUserId !== userId) {
-        onlineUsers.get(prevUserId)?.delete(socket.id);
-        if (!onlineUsers.get(prevUserId)?.size) {
-            onlineUsers.delete(prevUserId);
-        }
-        socket.leave(`user:${prevUserId}`);
-    }
-
-    // Already tracked for this socket → nothing new to do (avoids a redundant
+    // Already registered for this socket → nothing new to do (avoids a redundant
     // delivered-sweep + presence broadcast when both connect and an explicit
-    // user_online fire).
-    if (onlineUsers.get(userId)?.has(socket.id)) return;
+    // user_online fire). Tracked on the socket itself, which is inherently local
+    // to whichever instance owns the connection.
+    if (socket.data.presenceRegistered) return;
+    socket.data.presenceRegistered = true;
 
-    if (!onlineUsers.has(userId)) {
-        onlineUsers.set(userId, new Set());
-    }
-    onlineUsers.get(userId)!.add(socket.id);
-    socketToUser.set(socket.id, userId);
-    socket.data.userId = userId;
+    await addSocket(userId, socket.id);
 
     // Join a user-specific room so all devices for this user receive events
     socket.join(`user:${userId}`);
 
-    // Verify the socket actually joined the room
-    const roomMembers = await io.in(`user:${userId}`).fetchSockets();
     console.log(
-        `🟢 User online: ${userId}, socket: ${socket.id}, rooms: [${[...socket.rooms]}], user room size: ${roomMembers.length}`,
+        `🟢 User online: ${userId}, socket: ${socket.id}, rooms: [${[...socket.rooms]}]`,
     );
 
     // Mark undelivered messages delivered — but at most once per debounce
     // window per user, so rapid reconnects don't hammer the DB.
-    const now = Date.now();
-    if (now - (lastDeliveredSweep.get(userId) ?? 0) > DELIVERED_SWEEP_DEBOUNCE_MS) {
-        lastDeliveredSweep.set(userId, now);
-
+    if (await claimDeliveredSweep(userId, DELIVERED_SWEEP_DEBOUNCE_SEC)) {
         const userObjectId =
             mongoose.Types.ObjectId.createFromHexString(userId);
 
@@ -182,11 +174,11 @@ export default (io: Server, socket: Socket) => {
         socket.data.activeChatId = chatId;
 
         // Tell the current user if their friend is online
-        if (!isGroup) {
-            const isFriendOnline = onlineUsers.has(friendId);
+        if (!isGroup && friendId) {
+            const friendOnline = await isUserOnline(friendId);
             socket.emit("user_status_update", {
                 userId: friendId,
-                status: isFriendOnline ? "online" : "offline",
+                status: friendOnline ? "online" : "offline",
             });
         }
     });
@@ -270,9 +262,7 @@ export default (io: Server, socket: Socket) => {
                 (id) => id !== senderId,
             );
 
-            const recipientOnline = otherMembers.some((memberId) =>
-                onlineUsers.has(memberId),
-            );
+            const recipientOnline = await isAnyUserOnline(otherMembers);
 
             console.log(
                 `📨 send_message: chat=${data.chat}, sender=${senderId}, recipientOnline=${recipientOnline}`,
@@ -524,25 +514,31 @@ export default (io: Server, socket: Socket) => {
 
     // Disconnect
     socket.on("disconnect", () => {
-        const userId = socketToUser.get(socket.id);
-        if (!userId) return;
+        void (async () => {
+            const userId: string | undefined = socket.data.userId;
+            if (!userId || !socket.data.presenceRegistered) return;
+            socket.data.presenceRegistered = false;
 
-        socketToUser.delete(socket.id);
-        onlineUsers.get(userId)?.delete(socket.id);
+            // True only when the user has no sockets left on ANY instance —
+            // so a user with a phone here and a laptop elsewhere is not
+            // announced offline just because one connection dropped.
+            const fullyOffline = await removeSocket(userId, socket.id);
 
-        console.log(
-            `🔌 Socket disconnected: ${socket.id}, user: ${userId}, remaining: ${onlineUsers.get(userId)?.size ?? 0}`,
+            console.log(
+                `🔌 Socket disconnected: ${socket.id}, user: ${userId}, fullyOffline: ${fullyOffline}`,
+            );
+
+            if (fullyOffline) {
+                // Drop the debounce claim so a genuine return from offline runs
+                // the delivered sweep immediately (rather than waiting out the
+                // window).
+                await releaseDeliveredSweep(userId);
+                console.log("🔴 User offline:", userId);
+                await broadcastPresence(io, userId, "offline");
+            }
+        })().catch((err) =>
+            console.error("❌ disconnect handler error:", err),
         );
-
-        if (!onlineUsers.get(userId)?.size) {
-            onlineUsers.delete(userId);
-            // Fully offline → drop the debounce entry so a genuine return from
-            // offline runs the delivered sweep immediately (rather than waiting
-            // out the window).
-            lastDeliveredSweep.delete(userId);
-            console.log("🔴 User offline:", userId);
-            void broadcastPresence(io, userId, "offline");
-        }
         // Note: Socket.IO automatically removes the socket from all rooms on disconnect
     });
 };

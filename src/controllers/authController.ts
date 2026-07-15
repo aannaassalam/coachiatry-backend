@@ -7,6 +7,7 @@ import UserModel from "../model/userModel";
 import catchAsync from "../utils/catchAsync";
 import AppError from "../utils/appError";
 import { sendResponse } from "../utils/response";
+import { cached, cacheKeys } from "../utils/cache";
 import { sendEmail, azureSendMail } from "../utils/email_sms";
 import { OAuth2Client } from "google-auth-library";
 import {
@@ -314,6 +315,37 @@ export const googleAuth = catchAsync(
     },
 );
 
+// `protect` runs on every authenticated request, so this was the single most
+// frequent query in the app — a full, hydrated user document per request.
+//
+// The TTL is short and every user write invalidates the key from schema
+// middleware (see userModel), because `active` is the deactivation kill-switch
+// and `role` gates restrictTo: a stale entry means a deactivated user keeps
+// access. The TTL is the backstop for the paths middleware can't see (a direct
+// mongo edit, an updateMany), not the primary mechanism.
+const USER_CACHE_TTL_SEC = 60;
+
+// What gets cached. Note this is narrower than the old findById, which returned
+// otp/passwordResetToken/fcmTokens too: `toJSON` strips secrets on serialization
+// but does NOT run on .lean() objects, so caching the full document would write
+// live OTPs and reset tokens into Redis. Nothing reads those off req.user —
+// only _id, id, role and fullName are ever accessed.
+const PROTECT_SELECT =
+    "-password -otp -otpExpires -passwordResetToken -passwordResetExpires -fcmTokens";
+
+async function loadUserForRequest(userId: string) {
+    const lean = await cached(cacheKeys.user(String(userId)), USER_CACHE_TTL_SEC, () =>
+        UserModel.findById(userId).select(PROTECT_SELECT).lean()
+    );
+    if (!lean) return null;
+
+    // hydrate() rebuilds a real Mongoose document from the plain (JSON
+    // round-tripped) object with no DB call, so req.user keeps its ObjectId _id,
+    // its `id` virtual and its methods. Without this, req.user._id would be a
+    // string and req.user.id undefined.
+    return UserModel.hydrate(lean);
+}
+
 export const protect = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         let token: string | null;
@@ -332,7 +364,7 @@ export const protect = catchAsync(
             );
         }
         const decoded: any = jwt.verify(token, process.env.JWT_SECRET!);
-        const currentUser = await UserModel.findById(decoded.id);
+        const currentUser = await loadUserForRequest(decoded.id);
         if (!currentUser) {
             return next(
                 new AppError(

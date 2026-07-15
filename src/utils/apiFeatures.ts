@@ -1,7 +1,45 @@
+import crypto from "crypto";
 import { Query, FilterQuery } from "mongoose";
+import { cached, cacheKeys } from "./cache";
 
 interface QueryString {
     [key: string]: string;
+}
+
+// Upper bound on page size. `?limit=999999` used to be honored verbatim, which
+// let a single request pull an entire collection into memory — and there is no
+// authenticated rate limiter in front of it.
+const MAX_LIMIT = 200;
+const DEFAULT_LIMIT = 100;
+
+// Counts change only on insert/delete, never on update, so they tolerate a
+// short TTL far better than the rows they accompany.
+const COUNT_TTL_SEC = 30;
+
+/**
+ * Serialize a Mongo filter to a stable cache key.
+ *
+ * Not JSON.stringify: key order varies between equivalent filters, and — the
+ * dangerous part — JSON.stringify(/foo/i) is "{}", so every regex search would
+ * collapse to the same key and serve another search's count. RegExp, Date and
+ * ObjectId are all rendered explicitly here for that reason.
+ */
+function stableStringify(value: any): string {
+    if (value === null || value === undefined) return String(value);
+    if (value instanceof RegExp) return `RegExp(${value.source}|${value.flags})`;
+    if (value instanceof Date) return `Date(${value.toISOString()})`;
+    if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+    if (typeof value === "object") {
+        // ObjectId (and other BSON types carrying a hex representation).
+        if (typeof value.toHexString === "function") {
+            return `OID(${value.toHexString()})`;
+        }
+        const keys = Object.keys(value).sort();
+        return `{${keys
+            .map((k) => `${k}:${stableStringify(value[k])}`)
+            .join(",")}}`;
+    }
+    return typeof value === "string" ? JSON.stringify(value) : String(value);
 }
 
 class APIFeatures<T = any> {
@@ -15,11 +53,28 @@ class APIFeatures<T = any> {
         this.queryString = queryString as any;
     }
 
+    /**
+     * A filtered countDocuments is a full index/collection scan and runs as a
+     * second round trip before the page itself — on a large collection it often
+     * costs more than the rows it decorates. Cached briefly, keyed on the exact
+     * model + filter.
+     *
+     * Order-dependent, as before: call it after filter()/search() so the
+     * accumulated conditions are on the query.
+     */
     async calculateTotalCount() {
         const countQuery = { ...this.query.getQuery() };
-        this.totalCount = await this.query.model
-            .countDocuments(countQuery)
-            .exec();
+        const model = this.query.model;
+        const fingerprint = crypto
+            .createHash("sha256")
+            .update(stableStringify(countQuery))
+            .digest("hex");
+
+        this.totalCount = await cached(
+            cacheKeys.count(model.modelName, fingerprint),
+            COUNT_TTL_SEC,
+            () => model.countDocuments(countQuery).exec()
+        );
         return this;
     }
 
@@ -185,8 +240,10 @@ class APIFeatures<T = any> {
 
     paginate() {
         // 4) Pagination
-        const page = parseInt(this.queryString.page, 10) || 1;
-        this.limit = parseInt(this.queryString.limit, 10) || 100;
+        const page = Math.max(1, parseInt(this.queryString.page, 10) || 1);
+        const requested = parseInt(this.queryString.limit, 10) || DEFAULT_LIMIT;
+        // Clamped: an unbounded ?limit let one request pull a whole collection.
+        this.limit = Math.min(Math.max(1, requested), MAX_LIMIT);
         const skip = (page - 1) * this.limit;
 
         this.query = this.query.skip(skip).limit(this.limit);

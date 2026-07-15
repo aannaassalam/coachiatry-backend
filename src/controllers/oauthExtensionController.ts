@@ -3,12 +3,11 @@ import { NextFunction, Request, Response } from "express";
 import { OAuth2Client } from "google-auth-library";
 import { StatusCodes } from "http-status-codes";
 import jwt from "jsonwebtoken";
-import Redis from "ioredis";
 
 import UserModel from "../model/userModel";
 import AppError from "../utils/appError";
 import catchAsync from "../utils/catchAsync";
-import { redisConnection } from "../utils/redis";
+import { getCacheClient } from "../utils/redis";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Server-mediated Google OAuth for the Chrome extension.
@@ -43,10 +42,6 @@ const STATE_TTL_SECONDS = 300;
 // Matches `https://<extension-id>.chromiumapp.org[/anything]` only — guards
 // against open-redirect abuse since we 302 back to this URL with a JWT.
 const RETURN_TO_PATTERN = /^https:\/\/[a-z0-9-]+\.chromiumapp\.org(\/.*)?$/i;
-
-function getRedis(): Redis {
-    return new Redis(redisConnection);
-}
 
 function getCallbackUrl(req: Request): string {
     const base =
@@ -86,17 +81,15 @@ export const extensionStart = catchAsync(
         }
 
         const state = crypto.randomBytes(24).toString("hex");
-        const redis = getRedis();
-        try {
-            await redis.set(
-                `oauth_ext:${state}`,
-                returnTo,
-                "EX",
-                STATE_TTL_SECONDS
-            );
-        } finally {
-            redis.quit();
-        }
+        // Not wrapped in a fallback on purpose: if this write fails, the
+        // callback has no state to validate against, so the flow must fail here
+        // rather than send the user to Google for a login we can't complete.
+        await getCacheClient().set(
+            `oauth_ext:${state}`,
+            returnTo,
+            "EX",
+            STATE_TTL_SECONDS
+        );
 
         const params = new URLSearchParams({
             client_id: process.env.GOOGLE_CLIENT_ID,
@@ -140,15 +133,10 @@ export const extensionCallback = catchAsync(
             );
         }
 
-        const redis = getRedis();
-        let returnTo: string | null;
-        try {
-            returnTo = await redis.get(`oauth_ext:${state}`);
-            // One-time use — delete regardless of validity below.
-            if (returnTo) await redis.del(`oauth_ext:${state}`);
-        } finally {
-            redis.quit();
-        }
+        const redis = getCacheClient();
+        const returnTo = await redis.get(`oauth_ext:${state}`);
+        // One-time use — delete regardless of validity below.
+        if (returnTo) await redis.del(`oauth_ext:${state}`);
 
         if (!returnTo || !RETURN_TO_PATTERN.test(returnTo)) {
             return next(
