@@ -17,6 +17,9 @@ export interface IUserDocument extends Document {
     otp: string;
     otpExpires: Date;
     verified: boolean;
+    provider?: "local" | "google" | "apple";
+    appleId?: string;
+    appleRefreshToken?: string;
     createdAt: Date;
     updatedAt: Date;
     correctPassword(

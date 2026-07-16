@@ -10,6 +10,8 @@ import { sendResponse } from "../utils/response";
 import { cached, cacheKeys } from "../utils/cache";
 import { sendEmail, azureSendMail } from "../utils/email_sms";
 import { OAuth2Client } from "google-auth-library";
+import appleSignin, { AppleIdTokenType } from "apple-signin-auth";
+import { exchangeAppleAuthCode } from "../utils/appleAuth";
 import {
     OTP_EMAIL_HTML,
     PASSWORD_HTML,
@@ -208,7 +210,7 @@ export const login = catchAsync(
         if (!user.password)
             return next(
                 new AppError(
-                    "Please login using Google",
+                    "Please login using Google or Apple",
                     StatusCodes.BAD_REQUEST,
                 ),
             );
@@ -229,6 +231,32 @@ export const login = catchAsync(
         );
     },
 );
+
+// Provision the default chat surfaces every brand-new user expects: the
+// built-in "Coachiatry" group and a direct chat with each active staff member.
+// Shared by the Google and Apple social-login account-creation paths.
+const bootstrapNewUserChats = async (user: any) => {
+    await ChatModel.create({
+        createdBy: user._id,
+        type: "group",
+        name: "Coachiatry",
+        groupPhoto:
+            "https://coachiatry.s3.us-east-1.amazonaws.com/Logo+Mark+(1).png",
+        members: [{ user: user._id, role: "member" }],
+        isDeletable: false,
+    });
+
+    // Create direct chats with all staff (admins, managers, coaches)
+    const staff = await UserModel.find({
+        role: { $in: ["admin", "manager", "coach"] },
+        active: true,
+    }).select("_id");
+    await Promise.all(
+        staff.map((member) =>
+            createDirectChatIfNotExists(user._id, member._id, user._id),
+        ),
+    );
+};
 
 export const googleAuth = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
@@ -253,11 +281,14 @@ export const googleAuth = catchAsync(
             return next(new AppError("Invalid Google token", 400));
         }
 
-        // Check or create user in your DB
-        let user = await UserModel.findOne({ email });
+        // Only ACTIVE accounts sign in. A soft-deleted account is treated as
+        // gone — we create a fresh account rather than reviving it. The email
+        // partial-unique index only covers verified+active rows, so the new
+        // active account can coexist with the old soft-deleted one.
+        let user = await UserModel.findOne({ email, active: true });
         if (!user) {
-            // The extension may only sign IN existing users. New accounts must
-            // be created via the website so the onboarding flow runs in full.
+            // The extension may only sign IN existing (active) users. New
+            // accounts must be created via the website so onboarding runs.
             if (source === "extension") {
                 return next(
                     new AppError(
@@ -270,29 +301,11 @@ export const googleAuth = catchAsync(
                 email,
                 fullName,
                 photo,
+                provider: "google",
                 verified: true,
             });
 
-            await ChatModel.create({
-                createdBy: user._id,
-                type: "group",
-                name: "Coachiatry",
-                groupPhoto:
-                    "https://coachiatry.s3.us-east-1.amazonaws.com/Logo+Mark+(1).png",
-                members: [{ user: user._id, role: "member" }],
-                isDeletable: false,
-            });
-
-            // Create direct chats with all staff (admins, managers, coaches)
-            const staff = await UserModel.find({
-                role: { $in: ["admin", "manager", "coach"] },
-                active: true,
-            }).select("_id");
-            await Promise.all(
-                staff.map((member) =>
-                    createDirectChatIfNotExists(user._id, member._id, user._id),
-                ),
-            );
+            await bootstrapNewUserChats(user);
         }
 
         // Auto-join any groups this email was invited to (covers a brand-new
@@ -305,6 +318,127 @@ export const googleAuth = catchAsync(
         delete user.password;
 
         // Create your own app JWT (7 days)
+        createSendToken(
+            user,
+            StatusCodes.OK,
+            res,
+            "Logged in Successfully!",
+            platform,
+        );
+    },
+);
+
+// Native "Sign in with Apple" (iOS). The app performs the Apple authorization
+// with AuthenticationServices and forwards the resulting `identity_token` (a
+// signed JWT) plus, ONLY on the very first authorization, the user's name —
+// Apple never resends the name and never puts it in the token, so the client
+// must capture it once and pass it as `full_name`.
+export const appleAuth = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { identity_token, authorization_code, full_name, platform } =
+            req.body;
+
+        if (!identity_token) {
+            return next(new AppError("Missing Apple identity token", 400));
+        }
+        if (!process.env.APPLE_CLIENT_ID) {
+            return next(
+                new AppError(
+                    "Sign in with Apple is not configured on the server",
+                    StatusCodes.INTERNAL_SERVER_ERROR,
+                ),
+            );
+        }
+
+        // Verify the token against Apple's public keys (JWKS). This checks the
+        // signature, the issuer (https://appleid.apple.com) and the audience
+        // (our iOS bundle id), and rejects expired tokens.
+        let payload: AppleIdTokenType;
+        try {
+            payload = await appleSignin.verifyIdToken(identity_token, {
+                audience: process.env.APPLE_CLIENT_ID,
+                ignoreExpiration: false,
+            });
+        } catch {
+            return next(new AppError("Invalid Apple token", 400));
+        }
+
+        const appleId = payload.sub;
+        const email = payload.email;
+        if (!email) {
+            return next(
+                new AppError(
+                    "Apple did not return an email for this account",
+                    400,
+                ),
+            );
+        }
+
+        // Apple sends the name only on first authorization, in the native
+        // credential (not the token) — the client forwards it as `full_name`.
+        // Fall back to the email local-part so the required `fullName` field is
+        // always populated for a brand-new account.
+        const fullName =
+            (typeof full_name === "string" && full_name.trim()) ||
+            email.split("@")[0] ||
+            "Apple User";
+
+        // Only ACTIVE accounts take part in sign-in. A soft-deleted account
+        // (self-deleted or admin-deactivated) is treated as gone: we never
+        // revive it — we create a brand-new account instead.
+        let user =
+            (await UserModel.findOne({ appleId, active: true })) ||
+            (await UserModel.findOne({ email, active: true }));
+
+        const returningUser = !!user && user.appleId === appleId;
+
+        if (!returningUser) {
+            // We're about to assign this appleId (either linking Apple to an
+            // existing active account, or creating a fresh one). The unique
+            // appleId index is global, so first release it from any soft-deleted
+            // rows that still hold it — otherwise the assignment/insert 11000s.
+            await UserModel.updateMany(
+                { appleId, active: false },
+                { $unset: { appleId: "" } },
+            );
+
+            if (user) {
+                // Existing active account (matched by email) linking Apple.
+                user.appleId = appleId;
+                if (!user.provider) user.provider = "apple";
+                await user.save({ validateBeforeSave: false });
+            } else {
+                user = await UserModel.create({
+                    email,
+                    fullName,
+                    provider: "apple",
+                    appleId,
+                    verified: true,
+                });
+                await bootstrapNewUserChats(user);
+            }
+        }
+
+        // Capture a refresh token so the credential can be revoked when the user
+        // deletes their account. Best-effort: no-ops unless the APPLE_* signing
+        // key is configured, and never blocks the login.
+        if (authorization_code) {
+            const refreshToken = await exchangeAppleAuthCode(authorization_code);
+            if (refreshToken) {
+                user.appleRefreshToken = refreshToken;
+                await user.save({ validateBeforeSave: false });
+            }
+        }
+
+        // Auto-join any groups this email was invited to (covers a brand-new
+        // Apple user whose email had a pending invite).
+        await processPendingGroupInvitesForUser({
+            _id: user._id,
+            email: user.email,
+        });
+
+        delete user.password;
+
         createSendToken(
             user,
             StatusCodes.OK,

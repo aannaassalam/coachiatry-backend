@@ -138,3 +138,6 @@ dist
 build/
 
 .env
+# Apple Sign in with Apple signing key (.p8) — never commit
+secrets/
+*.p8

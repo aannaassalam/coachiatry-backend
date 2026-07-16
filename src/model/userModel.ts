@@ -87,6 +87,23 @@ const userSchema = new Schema<IUserDocument>(
             type: Boolean,
             default: false,
         },
+        // How the account authenticates. Absent on legacy rows; a password-less
+        // account is a social one. Set explicitly on new social sign-ups.
+        provider: {
+            type: String,
+            enum: ["local", "google", "apple"],
+        },
+        // Apple's stable, opaque user id (`sub`). Lets us recognise a returning
+        // Apple user even if they later use Hide-My-Email or change their email.
+        appleId: {
+            type: String,
+        },
+        // Apple refresh token, kept only to revoke the credential on account
+        // deletion. Never sent to clients.
+        appleRefreshToken: {
+            type: String,
+            select: false,
+        },
     },
     {
         timestamps: true,
@@ -121,6 +138,9 @@ userSchema.index({ assignedCoach: 1 });
 // active/verified combos that don't always match the unique partial index.
 userSchema.index({ active: 1, verified: 1 });
 userSchema.index({ email: 1 });
+// Sparse + unique: only Apple-linked accounts carry appleId, and each Apple
+// user maps to exactly one account.
+userSchema.index({ appleId: 1 }, { unique: true, sparse: true });
 
 userSchema.pre<IUserDocument>("save", async function (next) {
     if (!this.isModified("password")) return next();

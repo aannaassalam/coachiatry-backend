@@ -50,6 +50,7 @@
     "@types/morgan": "^1.9.9",
     "@types/stripe": "^8.0.417",
     "@types/validator": "^13.11.9",
+    "apple-signin-auth": "^1.7.9",
     "aws-sdk": "^2.1591.0",
     "axios": "^1.6.8",
     "bcryptjs": "^2.4.3",

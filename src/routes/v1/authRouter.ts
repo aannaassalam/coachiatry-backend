@@ -8,6 +8,7 @@ const router = express.Router();
 router.post("/signup", validateUserSignup, authController.signup);
 router.post("/login", authController.login);
 router.post("/google-auth", authController.googleAuth);
+router.post("/apple-auth", authController.appleAuth);
 // Server-mediated Google OAuth for the Chrome extension. See
 // controllers/oauthExtensionController for the full flow rationale.
 router.get("/google/extension-start", oauthExt.extensionStart);

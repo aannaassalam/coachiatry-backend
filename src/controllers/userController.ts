@@ -13,6 +13,7 @@ import {
     WATCHER_INVITE_HTML,
 } from "../constants/constants";
 import { createDirectChatIfNotExists } from "./chatController";
+import { revokeAppleToken } from "../utils/appleAuth";
 import {
     HIERARCHY_SELECT,
     flattenHierarchy,
@@ -1169,9 +1170,22 @@ export const deleteMyAccount = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const userId = req.user._id;
 
+        // Revoke the Apple credential before deactivating (App Store Guideline
+        // 5.1.1(v)). Best-effort — revokeAppleToken never throws and no-ops
+        // unless a refresh token was stored and the signing key is configured.
+        const withToken = await UserModel.findById(userId).select(
+            "+appleRefreshToken",
+        );
+        if (withToken?.appleRefreshToken) {
+            await revokeAppleToken(withToken.appleRefreshToken);
+        }
+
         const updated = await UserModel.findOneAndUpdate(
             { _id: userId, active: true },
-            { $set: { active: false, fcmTokens: [] } },
+            {
+                $set: { active: false, fcmTokens: [] },
+                $unset: { appleRefreshToken: 1 },
+            },
             { new: true },
         ).select(
             "-password -otp -otpExpires -passwordResetToken -passwordResetExpires -__v",
