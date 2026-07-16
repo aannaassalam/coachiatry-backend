@@ -1,5 +1,4 @@
 import "dotenv/config";
-import express, { Request, Response } from "express";
 
 import http from "http";
 import app from "./app";
@@ -48,13 +47,24 @@ process.on("uncaughtException", (err) => {
 // }
 
 async function bootstrap() {
-    const dbConnection = await connectDb();
+    const server = http.createServer(app);
 
-    app.use(
-        express.json({
-            limit: "100mb",
-        })
-    );
+    // Listen FIRST, before connecting to any external dependency. The load
+    // balancer health check (path "/") must get a 200 the moment the process is
+    // up; if we blocked on Mongo/Redis here and either was slow or unreachable,
+    // the port would stay closed and every health check would fail
+    // (Target.ResponseCodeMismatch → Severe). "/" and "/health" are registered
+    // synchronously in app.ts, so they answer regardless of DB state.
+    socket.initSocket(server);
+
+    server.listen(PORT, () => {
+        console.log(`Listening on PORT ${PORT}`);
+    });
+
+    // Connect to Mongo in the background. A failure no longer exits the process
+    // (see db.config.ts) — Mongoose retries on its own, and the app stays up and
+    // healthy while it does, rather than crash-looping.
+    const dbConnection = await connectDb();
 
     verifyRedisConnection().then((success) => {
         if (!success) {
@@ -62,20 +72,6 @@ async function bootstrap() {
                 "⚠ Redis is not reachable. App will continue without caching or sessions."
             );
         }
-    });
-
-    // app.use(errorHandler)
-
-    app.get("/health", (_req: Request, res: Response) =>
-        res.status(200).json({ status: "ok" })
-    );
-
-    const server = http.createServer(app);
-
-    socket.initSocket(server);
-
-    server.listen(PORT, () => {
-        console.log(`Listening on PORT ${PORT}`);
     });
 
     server.on("error", (err) => {
@@ -101,7 +97,7 @@ async function bootstrap() {
         await closeRedis();
         server.close(() => {
             console.log("HTTP server closed.");
-            process.exit(1);
+            process.exit(0);
         });
     };
 

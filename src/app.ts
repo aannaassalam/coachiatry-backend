@@ -109,6 +109,16 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     next();
 });
 
+// Health checks. Registered here — synchronously, before the "*" catch-all and
+// before any DB/Redis connection in server.ts — so the load balancer always
+// gets a 200 as soon as the process is listening. If these lived behind the
+// bootstrap() await or after app.all("*"), the ALB health check would hit the
+// 404 handler (Target.ResponseCodeMismatch) and mark the environment Severe.
+// Point the EB/ALB health check path at "/health".
+app.get(["/", "/health"], (_req: Request, res: Response) => {
+    res.status(200).json({ status: "ok" });
+});
+
 // 3) Routes
 app.use("/api/v1", v1Routes);
 
