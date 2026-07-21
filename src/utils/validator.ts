@@ -38,8 +38,12 @@ const userUpdateSchema = Joi.object({
     });
 
 const documentUpdateSchema = Joi.object({
-    title: Joi.string().min(2).max(50).trim().required(),
-    tag: Joi.string().trim().required(),
+    // The model puts no cap on title length and doesn't require a tag, so the
+    // 50-char limit / required tag here rejected perfectly valid documents
+    // (any existing doc with a longish title failed to save with "Invalid
+    // input"). Keep it lenient and aligned with the model.
+    title: Joi.string().min(2).max(255).trim().required(),
+    tag: Joi.string().trim().allow(null, "").optional(),
     content: Joi.string().trim().required(),
 })
     .unknown(false)
