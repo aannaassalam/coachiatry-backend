@@ -59,12 +59,22 @@ export const updateProfilePicture = catchAsync(
             Bucket: publicBucketName,
             Key: `profile/${fileName}`,
             Body: file.buffer,
+            ContentType: file.mimetype,
+            // Aggressive, long-lived caching for web browsers (and any HTTP
+            // cache). Safe because each upload gets a fresh `?v=` URL below, so
+            // an updated photo is fetched instead of served from cache.
+            CacheControl: "public, max-age=31536000, immutable",
         };
 
         const command = new PutObjectCommand(params);
         await s3.send(command);
 
-        const url = `https://${params.Bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${params.Key}`;
+        // The S3 key is stable (profile/<userId>.<ext>) and overwritten on each
+        // upload, so the base URL never changes. Append a version query param so
+        // clients (which cache avatars aggressively by URL) fetch the new image
+        // instead of serving the previously cached one. S3 ignores unknown query
+        // params on GET, so the object still resolves.
+        const url = `https://${params.Bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${params.Key}?v=${Date.now()}`;
 
         // Update user's profile picture URL in your database here
         await UserModel.findByIdAndUpdate(req.user?._id, {
