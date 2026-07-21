@@ -1,6 +1,7 @@
 import express from "express";
 import { protect, restrictTo } from "../../controllers/authController";
 import {
+    deleteScheduleMessage,
     editScheduleMessage,
     getMessages,
     getScheduleMessages,
@@ -23,7 +24,10 @@ router.get(
     authorizeManagedUser("userId"),
     getScheduleMessagesByCoach
 );
-router.route("/schedule/:messageId").patch(editScheduleMessage);
+router
+    .route("/schedule/:messageId")
+    .patch(editScheduleMessage)
+    .delete(deleteScheduleMessage);
 
 // Coach/admin/manager view a client's room. Role-gated (not membership-gated)
 // so they can read a room they aren't a member of. Must be declared before the

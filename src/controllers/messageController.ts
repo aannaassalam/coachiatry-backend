@@ -154,6 +154,13 @@ export const scheduleMessage = catchAsync(
         if (!scheduledAt || isNaN(new Date(scheduledAt).getTime())) {
             return next(new AppError("A valid scheduledAt is required", 400));
         }
+        // Guard against past/now times, which would otherwise resolve to a
+        // zero delay and send the message immediately.
+        if (new Date(scheduledAt).getTime() <= Date.now()) {
+            return next(
+                new AppError("Scheduled time must be in the future", 400),
+            );
+        }
 
         if (!(await isChatMember(chatId, userId))) {
             return next(
@@ -182,6 +189,11 @@ export const editScheduleMessage = catchAsync(
 
         if (!scheduledAt || isNaN(new Date(scheduledAt).getTime())) {
             return next(new AppError("A valid scheduledAt is required", 400));
+        }
+        if (new Date(scheduledAt).getTime() <= Date.now()) {
+            return next(
+                new AppError("Scheduled time must be in the future", 400),
+            );
         }
 
         // Only the user who scheduled the message may edit it.
@@ -220,6 +232,43 @@ export const editScheduleMessage = catchAsync(
         await rescheduleSend(msg);
 
         sendResponse(res, 200, "Message edited successfully", msg);
+    }
+);
+
+export const deleteScheduleMessage = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const messageId = req.params?.messageId;
+
+        const existing = await MessageModel.findById(messageId);
+        if (!existing) {
+            return next(new AppError("Scheduled message not found", 404));
+        }
+        if (existing.sender.toString() !== req.user._id.toString()) {
+            return next(
+                new AppError("You are not allowed to delete this message", 403),
+            );
+        }
+        // Guard against deleting an already-delivered message via this route.
+        if (!existing.scheduledAt) {
+            return next(new AppError("This message is not scheduled", 400));
+        }
+
+        // Cancel the queued send so it never fires.
+        if (existing.jobId) {
+            try {
+                const job = await messageQueue.getJob(existing.jobId);
+                if (job) await job.remove();
+            } catch (err) {
+                console.error(
+                    `Failed to remove job ${existing.jobId}:`,
+                    err,
+                );
+            }
+        }
+
+        await MessageModel.findByIdAndDelete(messageId);
+
+        sendResponse(res, 200, "Scheduled message deleted", null);
     }
 );
 
