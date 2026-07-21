@@ -3,6 +3,7 @@ import { NextFunction, Request, Response } from "express";
 import mongoose, { PipelineStage, Types } from "mongoose";
 import ChatModel from "../model/chatModel";
 import GroupInviteModel from "../model/groupInviteModel";
+import MessageModel from "../model/messageModel";
 import UserModel from "../model/userModel";
 import AppError from "../utils/appError";
 import {
@@ -414,32 +415,56 @@ export const getConversation = catchAsync(
                                 // Substitute a placeholder when the referenced
                                 // user no longer exists so the chat still
                                 // renders ("Deleted user") instead of crashing.
+                                // Also expose an explicit `deleted` flag on every
+                                // member — true when the account is missing
+                                // (hard-deleted) OR deactivated (active:false) —
+                                // so clients don't have to infer it.
                                 user: {
-                                    $ifNull: [
-                                        {
-                                            $arrayElemAt: [
-                                                {
-                                                    $filter: {
-                                                        input: "$memberUsers",
-                                                        as: "u",
-                                                        cond: {
-                                                            $eq: [
-                                                                "$$u._id",
-                                                                "$$m.user",
-                                                            ],
+                                    $let: {
+                                        vars: {
+                                            found: {
+                                                $arrayElemAt: [
+                                                    {
+                                                        $filter: {
+                                                            input: "$memberUsers",
+                                                            as: "u",
+                                                            cond: {
+                                                                $eq: [
+                                                                    "$$u._id",
+                                                                    "$$m.user",
+                                                                ],
+                                                            },
                                                         },
                                                     },
+                                                    0,
+                                                ],
+                                            },
+                                        },
+                                        in: {
+                                            $cond: [
+                                                { $ifNull: ["$$found", false] },
+                                                {
+                                                    $mergeObjects: [
+                                                        "$$found",
+                                                        {
+                                                            deleted: {
+                                                                $eq: [
+                                                                    "$$found.active",
+                                                                    false,
+                                                                ],
+                                                            },
+                                                        },
+                                                    ],
                                                 },
-                                                0,
+                                                {
+                                                    _id: "$$m.user",
+                                                    fullName: "Deleted user",
+                                                    photo: null,
+                                                    deleted: true,
+                                                },
                                             ],
                                         },
-                                        {
-                                            _id: "$$m.user",
-                                            fullName: "Deleted user",
-                                            photo: null,
-                                            deleted: true,
-                                        },
-                                    ],
+                                    },
                                 },
                             },
                         },
@@ -957,6 +982,62 @@ export const leaveGroup = catchAsync(
         );
 
         sendResponse(res, 200, "Group left successfully", group);
+    },
+);
+
+// Delete a single DIRECT conversation (chat doc + all its messages) that the
+// caller has with a DELETED user. Guarded so it can only remove conversations
+// whose other member is a deactivated/hard-deleted account — active-user
+// conversations and group chats can't be deleted through this route.
+export const deleteDirectConversation = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const userId = req.user._id;
+        const { chatId } = req.params;
+
+        const chat = await ChatModel.findById(chatId);
+        if (!chat) return next(new AppError("Chat not found", 404));
+        if (chat.type !== "direct") {
+            return next(
+                new AppError(
+                    "Only direct conversations can be deleted this way",
+                    400,
+                ),
+            );
+        }
+
+        const isMember = chat.members.some(
+            (m: any) => m.user.toString() === userId.toString(),
+        );
+        if (!isMember) {
+            return next(new AppError("You are not a member of this chat", 403));
+        }
+
+        const other = chat.members.find(
+            (m: any) => m.user.toString() !== userId.toString(),
+        );
+        if (other) {
+            // A missing user doc = hard-deleted (allowed). A present doc must be
+            // inactive (soft-deleted) — otherwise this is an active conversation
+            // and deletion is refused.
+            const otherUser = await UserModel.findById(other.user).select(
+                "active",
+            );
+            if (otherUser && otherUser.active !== false) {
+                return next(
+                    new AppError(
+                        "You can only delete conversations with deleted users",
+                        403,
+                    ),
+                );
+            }
+        }
+
+        await MessageModel.deleteMany({ chat: chat._id });
+        await ChatModel.findByIdAndDelete(chat._id);
+
+        return sendResponse(res, 200, "Conversation deleted", {
+            chatId: chat._id,
+        });
     },
 );
 

@@ -15,18 +15,31 @@ async function isOwnerOrManager(ownerId: any, requesterId: string) {
     return tree.includes(requesterId);
 }
 
-// Tasks: the owner, an assignee, or anyone in the owner's hierarchy may
-// read/edit/delete. Mirrors the assignee-permission model.
+// Staff roles are trusted to act on any client's data. This matches the app's
+// role-gated coach model and avoids 403s when the `assignedCoach` hierarchy
+// links (coach → manager → admin) aren't fully populated in the data. Re-tighten
+// to a strict hierarchy check only once that data is guaranteed complete.
+const STAFF_ROLES = ["admin", "manager", "coach"];
+
+// Tasks: the owner, an assignee, anyone in the owner's hierarchy, OR a staff
+// member (coach/manager/admin) may read/edit/delete. Staff access mirrors the
+// coach model used for chat/managed-user access so coaches can manage (and
+// delete) their clients' tasks even where the assignedCoach chain is incomplete.
 export const authorizeTaskAccess = (paramName = "id") =>
     catchAsync(async (req: Request, res: Response, next: NextFunction) => {
         const task = await TaskModel.findById(req.params[paramName]);
         if (!task) return next(new AppError("Task not found", 404));
 
         const requesterId = req.user._id.toString();
+        const isStaff = !!req.user.role && STAFF_ROLES.includes(req.user.role);
         const isAssignee = task.assignedTo.some(
             (id) => id.toString() === requesterId,
         );
-        if (isAssignee || (await isOwnerOrManager(task.user, requesterId))) {
+        if (
+            isStaff ||
+            isAssignee ||
+            (await isOwnerOrManager(task.user, requesterId))
+        ) {
             return next();
         }
         return next(
@@ -103,8 +116,7 @@ export const authorizeChatMembership = (paramName = "roomId") =>
 // the chat members) but that blocked legitimate managers/admins whenever the
 // upper `assignedCoach` links (coach → manager → admin) weren't fully populated
 // in the data. Re-tighten to a hierarchy check only once that data is
-// guaranteed complete.
-const STAFF_ROLES = ["admin", "manager", "coach"];
+// guaranteed complete. (STAFF_ROLES is defined near the top of this file.)
 export async function canAccessChat(
     chatId: any,
     requesterId: string,

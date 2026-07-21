@@ -16,6 +16,7 @@ import {
     getGroupInvite,
     inviteToGroupByEmail,
     leaveGroup,
+    deleteDirectConversation,
     startChatMultipartUpload,
 } from "../../controllers/chatController";
 import upload from "../../utils/multerConfig";
@@ -50,6 +51,8 @@ router.post("/upload/complete", chatUploadComplete);
 router.post("/group", upload.single("groupPhoto"), createGroup);
 router.post("/group/edit", upload.single("groupPhoto"), editGroup);
 router.delete("/leave-group/:chatId", leaveGroup);
+// Delete a single direct conversation (with a deleted user) + its messages.
+router.delete("/conversation/:chatId", deleteDirectConversation);
 
 // Group invites by email (owner sends; invitee fetches/accepts after auth).
 router.post("/group/invite", inviteToGroupByEmail);
