@@ -543,19 +543,13 @@ export const accessSharedTasks = catchAsync(
             category: { $ne: null },
         };
 
-        const features = new APIFeatures(
-            TaskModel.find(filter),
-            req.query as any,
-        )
-            .filter()
-            .sort()
-            .limitFields()
-            .search()
-            .populate();
-        features.query = features.query.populate("status").populate("category");
-
-        const raw = (await features.query) as any[];
-        const doc = raw.filter((t) => t?.status != null && t?.category != null);
+        // Was an inline copy of fetchTaskList's non-slim branch, which meant the
+        // shared list never got `assignedTo` populated and the web app couldn't
+        // show who a task is assigned to. Going through fetchTaskList picks up
+        // the ?slim=true path (TASK_LIST_POPULATE — assignedTo included, with
+        // only fullName/photo/role/updatedAt selected) while leaving the
+        // hydrated, ?populate=-driven response untouched for other consumers.
+        const doc = await fetchTaskList(filter, req);
 
         sendResponse(res, 200, "Tasks retrieved successfully", doc);
     },
