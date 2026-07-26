@@ -1,5 +1,6 @@
 import express from "express";
 import { protect, restrictTo } from "../../controllers/authController";
+import { authorizeSharedView } from "../../utils/authorize";
 import { validateDocumentUpdate } from "../../utils/validator";
 import * as factory from "./../../controllers/handleFactory";
 import CategoryModel from "../../model/categoryModel";
@@ -16,6 +17,13 @@ router
         })
     )
     .post(factory.createOne(CategoryModel, { userAsDocumentOwner: true }));
+
+// Same as statuses: a share-link watcher reads the sheet OWNER's categories.
+router.get(
+    "/shared/:shareId",
+    authorizeSharedView(),
+    factory.getAllUnpaginated(CategoryModel, { coachTypeFilter: true })
+);
 
 router
     .route("/coach/:userId")

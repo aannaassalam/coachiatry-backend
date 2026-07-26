@@ -40,6 +40,12 @@ const chatSchema = new Schema<IChatDocument>(
                     type: Date,
                     default: Date.now,
                 },
+                // Per-member, so archiving a conversation only moves it out of
+                // *your* list — the other side's list is untouched.
+                archived: {
+                    type: Boolean,
+                    default: false,
+                },
             },
         ],
         lastMessage: {

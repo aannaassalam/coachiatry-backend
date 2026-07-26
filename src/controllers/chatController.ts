@@ -50,10 +50,29 @@ export async function createDirectChatIfNotExists(
     });
 }
 
+// Archiving is per-member (see chatModel), so "is this chat archived?" is a
+// question about *this* viewer's entry in members[]. Chats saved before the
+// flag existed have no `archived` key at all, hence `$ne: true` rather than
+// `false` for the default list.
+const archivedMatch = (
+    userOid: Types.ObjectId,
+    archived: boolean,
+): PipelineStage.FacetPipelineStage => ({
+    $match: {
+        members: {
+            $elemMatch: {
+                user: userOid,
+                archived: archived ? true : { $ne: true },
+            },
+        },
+    },
+});
+
 export const getAllConversations = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const userId = req.user?._id;
         if (!userId) return next(new AppError("Unauthorized", 401));
+        const wantArchived = req.query.archived === "true";
 
         const userOid = Types.ObjectId.createFromHexString(userId.toString());
         const page = parseInt((req.query.page as string) || "1", 10);
@@ -131,8 +150,11 @@ export const getAllConversations = catchAsync(
             });
         }
 
-        // Cut to the page before any per-chat work happens.
+        // Cut to the page before any per-chat work happens. The archived split
+        // lives inside the facets (not in baseStages) so the archivedCount
+        // facet below can still see the whole set in one aggregation.
         const paginateStages: PipelineStage.FacetPipelineStage[] = [
+            archivedMatch(userOid, wantArchived),
             { $sort: { lastMessageAt: -1 } },
             { $skip: skip },
             { $limit: limit },
@@ -345,7 +367,16 @@ export const getAllConversations = catchAsync(
                         // of the user's chats before it could take a page.
                     ],
 
-                    totalCount: [{ $count: "count" }],
+                    totalCount: [
+                        archivedMatch(userOid, wantArchived),
+                        { $count: "count" },
+                    ],
+                    // Drives the "Archived (n)" row at the top of the list, so
+                    // it costs no extra round trip.
+                    archivedCount: [
+                        archivedMatch(userOid, true),
+                        { $count: "count" },
+                    ],
                 },
             },
         ]);
@@ -362,6 +393,7 @@ export const getAllConversations = catchAsync(
                 currentPage: page,
                 totalPages,
                 totalCount: total,
+                archivedCount: result[0]?.archivedCount?.[0]?.count ?? 0,
             },
         });
     },
@@ -412,6 +444,9 @@ export const getConversation = catchAsync(
                                 role: "$$m.role",
                                 joinedAt: "$$m.joinedAt",
                                 lastReadAt: "$$m.lastReadAt",
+                                // Lets the chat header offer Archive vs
+                                // Unarchive for the viewer's own membership.
+                                archived: { $ifNull: ["$$m.archived", false] },
                                 // Substitute a placeholder when the referenced
                                 // user no longer exists so the chat still
                                 // renders ("Deleted user") instead of crashing.
@@ -494,6 +529,9 @@ export const getAllConversationsByCoach = catchAsync(
         const page = parseInt((req.query.page as string) || "1", 10);
         const limit = parseInt((req.query.limit as string) || "20", 10);
         const skip = (page - 1) * limit;
+        // Coaches and higher-ups see the same archived/unarchived split the
+        // client sees — archiving state belongs to the client's membership.
+        const wantArchived = req.query.archived === "true";
 
         const sensitiveProjection = {
             $project: {
@@ -516,6 +554,7 @@ export const getAllConversationsByCoach = catchAsync(
                         // per-chat last-message and unread lookups below only run
                         // for the 20 rows being returned rather than for every
                         // chat this user is in.
+                        archivedMatch(userOid, wantArchived),
                         { $sort: { lastMessageAt: -1 } },
                         { $skip: skip },
                         { $limit: limit },
@@ -709,7 +748,14 @@ export const getAllConversationsByCoach = catchAsync(
                         // Already ordered and paginated above by the index.
                     ],
 
-                    totalCount: [{ $count: "count" }],
+                    totalCount: [
+                        archivedMatch(userOid, wantArchived),
+                        { $count: "count" },
+                    ],
+                    archivedCount: [
+                        archivedMatch(userOid, true),
+                        { $count: "count" },
+                    ],
                 },
             },
         ]);
@@ -726,6 +772,7 @@ export const getAllConversationsByCoach = catchAsync(
                 currentPage: page,
                 totalPages,
                 totalCount: total,
+                archivedCount: result[0]?.archivedCount?.[0]?.count ?? 0,
             },
         });
     },
@@ -982,6 +1029,30 @@ export const leaveGroup = catchAsync(
         );
 
         sendResponse(res, 200, "Group left successfully", group);
+    },
+);
+
+// Archive / unarchive a conversation for the requester only — writes the flag
+// on their own members[] entry, never anyone else's.
+export const setChatArchived = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { chatId } = req.params;
+        const archived = req.body?.archived !== false;
+
+        const result = await ChatModel.updateOne(
+            { _id: chatId, "members.user": req.user._id },
+            { $set: { "members.$.archived": archived } },
+        );
+        if (!result.matchedCount) {
+            return next(new AppError("Chat not found", 404));
+        }
+
+        sendResponse(
+            res,
+            200,
+            archived ? "Conversation archived" : "Conversation unarchived",
+            { chatId, archived },
+        );
     },
 );
 

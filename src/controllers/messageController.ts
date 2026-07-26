@@ -322,8 +322,17 @@ export const getScheduleMessages = catchAsync(
                         // a. Match the chat document
                         { $match: { $expr: { $eq: ["$_id", "$$chatId"] } } },
 
-                        // b. Unwind members so we can look up individual users
-                        { $unwind: "$members" },
+                        // b. Unwind members so we can look up individual users.
+                        // Preserve empties: a plain $unwind DROPS a chat whose
+                        // members array is empty (a group everyone has left),
+                        // which made the whole `chat` field come back undefined
+                        // and blew up the scheduled-messages table.
+                        {
+                            $unwind: {
+                                path: "$members",
+                                preserveNullAndEmptyArrays: true,
+                            },
+                        },
 
                         // c. Lookup the User details for this specific member
                         {
@@ -486,8 +495,17 @@ export const getScheduleMessagesByCoach = catchAsync(
                         // a. Match the chat document
                         { $match: { $expr: { $eq: ["$_id", "$$chatId"] } } },
 
-                        // b. Unwind members so we can look up individual users
-                        { $unwind: "$members" },
+                        // b. Unwind members so we can look up individual users.
+                        // Preserve empties: a plain $unwind DROPS a chat whose
+                        // members array is empty (a group everyone has left),
+                        // which made the whole `chat` field come back undefined
+                        // and blew up the scheduled-messages table.
+                        {
+                            $unwind: {
+                                path: "$members",
+                                preserveNullAndEmptyArrays: true,
+                            },
+                        },
 
                         // c. Lookup the User details for this specific member
                         {

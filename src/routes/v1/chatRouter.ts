@@ -17,6 +17,7 @@ import {
     inviteToGroupByEmail,
     leaveGroup,
     deleteDirectConversation,
+    setChatArchived,
     startChatMultipartUpload,
 } from "../../controllers/chatController";
 import upload from "../../utils/multerConfig";
@@ -53,6 +54,14 @@ router.post("/group/edit", upload.single("groupPhoto"), editGroup);
 router.delete("/leave-group/:chatId", leaveGroup);
 // Delete a single direct conversation (with a deleted user) + its messages.
 router.delete("/conversation/:chatId", deleteDirectConversation);
+
+// Archive/unarchive for the requester only (membership guard, not role-gated:
+// you archive your own view of the conversation).
+router.patch(
+    "/:chatId/archive",
+    authorizeChatMembership("chatId"),
+    setChatArchived
+);
 
 // Group invites by email (owner sends; invitee fetches/accepts after auth).
 router.post("/group/invite", inviteToGroupByEmail);

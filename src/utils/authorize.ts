@@ -5,6 +5,8 @@ import TaskModel from "../model/taskModel";
 import ChatModel from "../model/chatModel";
 import DocumentModel from "../model/documentModel";
 import TranscriptionModel from "../model/transcriptionModel";
+import SavedFilterModel from "../model/savedFilterModel";
+import UserModel from "../model/userModel";
 import { getManagementTreeIds } from "./hierarchy";
 
 // Is the requester the owner of `ownerId`, or somewhere in that owner's
@@ -81,6 +83,55 @@ export const authorizeTranscriptionAccess = (paramName = "id") =>
                 403,
             ),
         );
+    });
+
+// Saved task-sheet filters are shared per SHEET, not per creator: the sheet's
+// owner (`forUser`) and anyone managing them — their coach/manager/admin — all
+// work on the same set, so all of them may edit and delete. A watcher's own
+// sheet is a different `forUser` and stays out of it entirely.
+export const authorizeSavedFilterAccess = (paramName = "id") =>
+    catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+        const doc = await SavedFilterModel.findById(req.params[paramName]);
+        if (!doc) return next(new AppError("Saved filter not found", 404));
+
+        const requesterId = req.user._id.toString();
+        const isStaff = !!req.user.role && STAFF_ROLES.includes(req.user.role);
+        // Pre-`forUser` docs fall back to their creator as the sheet owner.
+        const sheetOwner = doc.forUser ?? doc.user;
+        if (isStaff || (await isOwnerOrManager(sheetOwner, requesterId))) {
+            return next();
+        }
+        return next(
+            new AppError("You are not allowed to access this filter", 403),
+        );
+    });
+
+/**
+ * Share links: resolve `:shareId` to the sheet's owner and confirm the
+ * requester still has view access (same rule as accessSharedTasks), then stamp
+ * the owner's id onto `req.params.userId`.
+ *
+ * That last part is deliberate: it lets a shared route reuse the existing
+ * `coachTypeFilter` list handlers verbatim, so a watcher reads the OWNER's
+ * statuses/categories instead of their own.
+ */
+export const authorizeSharedView = (paramName = "shareId") =>
+    catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+        const sharer = await UserModel.findOne({
+            shareId: req.params[paramName],
+        }).select("_id sharedViewers");
+        if (!sharer) return next(new AppError("Invalid share link", 404));
+
+        const requesterId = req.user._id.toString();
+        const allowed = (sharer.sharedViewers ?? []).some(
+            (id: any) => id.toString() === requesterId,
+        );
+        if (!allowed) {
+            return next(new AppError("Access revoked or not granted", 403));
+        }
+
+        req.params.userId = sharer._id.toString();
+        next();
     });
 
 // Membership check used by chat/message controllers.

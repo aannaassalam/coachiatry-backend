@@ -1,5 +1,6 @@
 import express from "express";
 import { protect, restrictTo } from "../../controllers/authController";
+import { authorizeSharedView } from "../../utils/authorize";
 import { validateDocumentUpdate } from "../../utils/validator";
 import * as factory from "./../../controllers/handleFactory";
 import StatusModel from "../../model/statusModel";
@@ -16,6 +17,14 @@ router
         })
     )
     .post(factory.createOne(StatusModel, { userAsDocumentOwner: true }));
+
+// A share-link watcher reads the sheet OWNER's statuses — grouping and the
+// filter dropdowns are meaningless against their own.
+router.get(
+    "/shared/:shareId",
+    authorizeSharedView(),
+    factory.getAllUnpaginated(StatusModel, { coachTypeFilter: true })
+);
 
 router
     .route("/coach/:userId")

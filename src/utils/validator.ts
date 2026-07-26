@@ -51,6 +51,27 @@ const documentUpdateSchema = Joi.object({
         "object.unknown": 'Invalid input - field "{#label}" is not allowed',
     });
 
+// Saved task-sheet filters. `unknown(false)` is the point: it stops a client
+// from smuggling `user` through the generic create/update factory and
+// re-owning someone else's saved filter.
+const savedFilterSchema = Joi.object({
+    name: Joi.string().min(1).max(60).trim().required(),
+    filters: Joi.array()
+        .items(
+            Joi.object({
+                selectedKey: Joi.string().required(),
+                selectedOperator: Joi.string().required(),
+                selectedValue: Joi.string().allow("").default(""),
+            }).unknown(false),
+        )
+        .min(1)
+        .required(),
+})
+    .unknown(false)
+    .messages({
+        "object.unknown": 'Invalid input - field "{#label}" is not allowed',
+    });
+
 // Generic validation middleware factory
 const validatePayload = (schema: Joi.ObjectSchema) => {
     return (req: Request, res: Response, next: NextFunction) => {
@@ -78,6 +99,8 @@ export const validateUserSignup = validatePayload(userSignupSchema);
 export const validateUserUpdate = validatePayload(userUpdateSchema);
 
 export const validateDocumentUpdate = validatePayload(documentUpdateSchema);
+
+export const validateSavedFilter = validatePayload(savedFilterSchema);
 
 // Export the factory function for potential future use
 export { validatePayload };

@@ -11,6 +11,7 @@ export interface IChatDocument extends Document {
             role: "member" | "admin" | "owner";
             joinedAt: Date;
             lastReadAt: Date;
+            archived?: boolean;
         },
     ];
     lastMessage: {
