@@ -124,7 +124,13 @@ export const getUserById = catchAsync(
         const users = await UserModel.findById(
             userId,
             "_id fullName email photo createdAt role assignedCoach",
-        ).populate("assignedCoach");
+        ).populate({
+            // Was an unrestricted populate, which shipped every field of each
+            // coach — password hash and OTP included — and made the detail
+            // payload far bigger than the screen needs.
+            path: "assignedCoach",
+            select: "_id fullName email photo role",
+        });
 
         sendResponse(res, 200, "User fetched by id", users);
     },
