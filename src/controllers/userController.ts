@@ -30,6 +30,46 @@ const s3 = new S3Client({
 });
 const publicBucketName = process.env.AWS_BUCKET_NAME || "";
 
+const MANAGING_ROLES = ["admin", "manager", "coach"];
+
+// Which roles each staff role may act on, mirroring updateUserByHierarchy:
+// admins manage everyone below them, managers their coaches and those coaches'
+// clients, coaches their own clients. Nobody manages an admin through here.
+const MANAGEABLE_ROLES: Record<string, string[]> = {
+    admin: ["manager", "coach", "user"],
+    manager: ["coach", "user"],
+    coach: ["user"],
+};
+
+/**
+ * Who is this request acting on? Defaults to the caller, so every handler using
+ * it keeps working unchanged on the self-scoped routes. When a `userId` is
+ * supplied (param or query) the caller must be staff and the target must be a
+ * role they outrank — that's the staff-managing-someone case behind the client
+ * settings modal. Mirrors the staff-trust model already used in utils/authorize.
+ */
+export const resolveTargetUser = async (req: Request) => {
+    const targetId = (req.params.userId ?? req.query.userId) as
+        | string
+        | undefined;
+
+    if (!targetId || targetId === req.user._id.toString()) return req.user;
+
+    if (!MANAGING_ROLES.includes(req.user.role)) {
+        throw new AppError("You cannot manage this user", 403);
+    }
+
+    const target = await UserModel.findById(targetId);
+    if (!target) throw new AppError("User not found", 404);
+
+    const allowed = MANAGEABLE_ROLES[req.user.role] ?? [];
+    if (!allowed.includes(target.role)) {
+        throw new AppError("You cannot manage this user", 403);
+    }
+
+    return target;
+};
+
 // Controller to update user profile picture
 export const updateProfilePicture = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
@@ -52,8 +92,10 @@ export const updateProfilePicture = catchAsync(
         }
 
         // Extract file extension
+        const target = await resolveTargetUser(req);
+
         const ext = file.originalname.split(".").pop();
-        const fileName = ext ? `${req.user?._id}.${ext}` : `${req.user?._id}`;
+        const fileName = ext ? `${target._id}.${ext}` : `${target._id}`;
 
         const params = {
             Bucket: publicBucketName,
@@ -77,7 +119,7 @@ export const updateProfilePicture = catchAsync(
         const url = `https://${params.Bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${params.Key}?v=${Date.now()}`;
 
         // Update user's profile picture URL in your database here
-        await UserModel.findByIdAndUpdate(req.user?._id, {
+        await UserModel.findByIdAndUpdate(target._id, {
             photo: url,
         });
 
@@ -123,8 +165,13 @@ export const getUserById = catchAsync(
 
         const users = await UserModel.findById(
             userId,
-            "_id fullName email photo createdAt role assignedCoach",
-        ).populate({
+            "_id fullName email photo createdAt role assignedCoach shareId sharedViewers",
+        )
+            .populate({
+                path: "sharedViewers",
+                select: "_id fullName email photo role",
+            })
+            .populate({
             // Was an unrestricted populate, which shipped every field of each
             // coach — password hash and OTP included — and made the detail
             // payload far bigger than the screen needs.
@@ -253,7 +300,7 @@ export const suggestUsers = catchAsync(
 // Exact-email lookup used by the "Add Watchers" flow.
 export const findWatcherByEmail = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const currentUser = req.user;
+        const currentUser = await resolveTargetUser(req);
         const email = String(req.query.email || "")
             .trim()
             .toLowerCase();
@@ -294,7 +341,7 @@ export const findWatcherByEmail = catchAsync(
 // Email a share link to people who don't have an account yet.
 export const inviteWatchersByEmail = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const currentUser = req.user;
+        const currentUser = await resolveTargetUser(req);
         const { emails } = req.body;
 
         if (!Array.isArray(emails) || emails.length === 0) {
@@ -365,7 +412,7 @@ export const addWatchersByLink = catchAsync(
 export const addWatchersById = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const { userIds } = req.body;
-        const currentUser = req.user?._id;
+        const currentUser = (await resolveTargetUser(req))._id;
 
         await UserModel.findByIdAndUpdate(currentUser, {
             $addToSet: { sharedViewers: { $each: userIds } },
@@ -387,7 +434,9 @@ export const addWatchersById = catchAsync(
 
 export const revokeViewerAccess = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const sharer = await UserModel.findById(req.user._id);
+        const sharer = await UserModel.findById(
+            (await resolveTargetUser(req))._id,
+        );
         if (!sharer) throw new AppError("User not found", 404);
 
         sharer.sharedViewers = sharer.sharedViewers.filter(
@@ -1212,6 +1261,42 @@ export const deleteMyAccount = catchAsync(
         }
 
         sendResponse(res, 200, "Account deleted successfully", updated);
+    },
+);
+
+// Staff setting a CLIENT's password from the client settings modal. Unlike
+// authController.updatePassword this takes no current password — the coach
+// doesn't know it — so it is gated entirely by resolveTargetUser (staff acting
+// on a client, never on themselves or on another staff account).
+export const setUserPassword = catchAsync(
+    async (req: Request, res: Response, next: NextFunction) => {
+        const { password } = req.body as { password?: string };
+
+        if (!password || password.length < 8) {
+            return next(
+                new AppError("Password must be at least 8 characters", 400),
+            );
+        }
+
+        if (req.params.userId === req.user._id.toString()) {
+            return next(
+                new AppError(
+                    "Use the change-password flow for your own account",
+                    400,
+                ),
+            );
+        }
+
+        const target = await resolveTargetUser(req);
+
+        // save() (not findByIdAndUpdate) so the schema's pre-save hook hashes it.
+        const user = await UserModel.findById(target._id).select("+password");
+        if (!user) return next(new AppError("User not found", 404));
+
+        user.password = password;
+        await user.save();
+
+        sendResponse(res, 200, "Password updated successfully", null);
     },
 );
 

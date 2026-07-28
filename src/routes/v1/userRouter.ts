@@ -17,6 +17,7 @@ import {
     getUsers,
     getUsersById,
     revokeViewerAccess,
+    setUserPassword,
     suggestUsers,
     findWatcherByEmail,
     inviteWatchersByEmail,
@@ -50,6 +51,19 @@ router.post("/add-watchers", addWatchersById);
 router.get("/share/:shareId", addWatchersByLink);
 router.get("/get-all-watching", getAllWatching);
 router.delete("/share/:viewerId", revokeViewerAccess);
+
+// Coach-managing-a-client mirrors of the self-scoped routes above. Same
+// handlers — resolveTargetUser swaps `req.user` for the `:userId` client once
+// it has checked the caller is staff. Used by the client settings modal.
+router.post("/:userId/add-watchers", addWatchersById);
+router.post("/:userId/invite-watchers", inviteWatchersByEmail);
+router.delete("/:userId/share/:viewerId", revokeViewerAccess);
+router.patch(
+    "/:userId/update-profile-picture",
+    upload.single("profilePicture"),
+    updateProfilePicture,
+);
+router.patch("/:userId/password", setUserPassword);
 
 router.get("/get-users", getUsers);
 router.get("/get-all", getAllUsers);
