@@ -71,10 +71,15 @@ export const extensionStart = catchAsync(
             );
         }
 
-        if (!process.env.GOOGLE_CLIENT_ID) {
+        // Both are required here. The ID alone is enough for authController's
+        // verifyIdToken path, so it's easy to have the ID set and the secret
+        // missing — which fails much later, as an opaque `invalid_client` from
+        // Google inside extensionCallback's code exchange. Fail here instead,
+        // before sending the user to Google.
+        if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
             return next(
                 new AppError(
-                    "GOOGLE_CLIENT_ID is not configured on the backend",
+                    "Google OAuth is not configured on the backend (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET)",
                     StatusCodes.INTERNAL_SERVER_ERROR
                 )
             );
