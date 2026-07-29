@@ -7,6 +7,27 @@ import { PipelineStage, Types } from "mongoose";
 import { messageQueue } from "../utils/queues/messageQueue";
 import { isChatMember } from "../utils/authorize";
 
+const MESSAGE_REPEATS = new Set([
+    "once",
+    "none",
+    "daily",
+    "weekly",
+    "monthly",
+    "yearly",
+]);
+
+function normalizeScheduleRepeat(value: unknown) {
+    if (value === undefined || value === null || value === "") return "once";
+
+    const repeat = String(value).toLowerCase();
+    if (!MESSAGE_REPEATS.has(repeat)) return null;
+
+    // Existing callers used "none" for a one-time scheduled message. Store new
+    // scheduled rows as "once" so the UI can distinguish them from unscheduled
+    // normal messages that still use the model default "none".
+    return repeat === "none" ? "once" : repeat;
+}
+
 export const getMessages = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const room = req.params?.roomId;
@@ -149,7 +170,12 @@ async function rescheduleSend(msg: any) {
 export const scheduleMessage = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const userId = req.user?._id;
-        const { message, scheduledAt, frequency, chatId } = req.body;
+        const { message, scheduledAt, frequency, repeat, chatId } = req.body;
+        const scheduleRepeat = normalizeScheduleRepeat(repeat ?? frequency);
+
+        if (!scheduleRepeat) {
+            return next(new AppError("A valid repeat value is required", 400));
+        }
 
         if (!scheduledAt || isNaN(new Date(scheduledAt).getTime())) {
             return next(new AppError("A valid scheduledAt is required", 400));
@@ -173,7 +199,7 @@ export const scheduleMessage = catchAsync(
             chat: chatId,
             content: message,
             scheduledAt: new Date(scheduledAt),
-            repeat: frequency || "none",
+            repeat: scheduleRepeat,
         });
 
         await rescheduleSend(msg);
@@ -185,7 +211,12 @@ export const scheduleMessage = catchAsync(
 export const editScheduleMessage = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const messageId = req.params?.messageId;
-        const { message, scheduledAt, frequency } = req.body;
+        const { message, scheduledAt, frequency, repeat } = req.body;
+        const scheduleRepeat = normalizeScheduleRepeat(repeat ?? frequency);
+
+        if (!scheduleRepeat) {
+            return next(new AppError("A valid repeat value is required", 400));
+        }
 
         if (!scheduledAt || isNaN(new Date(scheduledAt).getTime())) {
             return next(new AppError("A valid scheduledAt is required", 400));
@@ -220,7 +251,7 @@ export const editScheduleMessage = catchAsync(
             {
                 content: message,
                 scheduledAt: new Date(scheduledAt),
-                repeat: frequency || "none",
+                repeat: scheduleRepeat,
             },
             { new: true },
         );

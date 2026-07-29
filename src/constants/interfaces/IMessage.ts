@@ -21,7 +21,7 @@ export interface IMessageDocument extends Document {
     replyTo: ObjectId;
     scheduledAt: Date;
     jobId: string | null;
-    repeat: "none" | "daily" | "weekly" | "monthly" | "yearly";
+    repeat: "none" | "once" | "daily" | "weekly" | "monthly" | "yearly";
     createdAt: Date;
     updatedAt: Date;
     status: "pending" | "sent" | "delivered" | "seen" | "failed";

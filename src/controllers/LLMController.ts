@@ -32,6 +32,27 @@ import moment from "moment";
 import { buildNativeTasksJson } from "../ai/native/buildNativeTasksJson";
 import { buildNativeDocumentsJson } from "../ai/native/buildNativeDocumentsJson";
 import { buildJsonText } from "../ai/native/jsonHelpers";
+import { canActForUser } from "../utils/authorize";
+
+/**
+ * Resolve whose data this AI request runs over.
+ *
+ * `req.body.user` is how a coach/manager/admin points these endpoints at a
+ * client (the coach transcript view sends it). It was previously taken at face
+ * value, so ANY logged-in user could pass someone else's id and have the model
+ * read that person's transcripts, tasks and documents back to them. Returns
+ * null when the requester may not act for that user; callers must 403.
+ */
+async function resolveTargetUser(req: Request): Promise<string | null> {
+    const requesterId = String(req.user?._id);
+    const target = req.body.user ? String(req.body.user) : requesterId;
+    if (target === requesterId) return requesterId;
+    return (await canActForUser(target, requesterId, req.user?.role))
+        ? target
+        : null;
+}
+
+const FORBIDDEN_USER = { error: "You are not allowed to access this user's data" };
 
 const filterTasksFromContext = (
     tasks: any[],
@@ -251,7 +272,8 @@ const deriveChatDateFrom = (
 export const aiController = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const { ai, Type } = await getGeminiClient();
-        const userId = req.body.user ?? String(req.user?._id);
+        const userId = await resolveTargetUser(req);
+        if (!userId) return res.status(403).json(FORBIDDEN_USER);
 
         // Page routing: default to general
         const page: PageKind = (
@@ -764,7 +786,8 @@ const ALLOWED_TRANSCRIPT_ACTIONS = new Set([
 export const transcriptionAIController = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
         const { ai, Type } = await getGeminiClient();
-        const userId = req.body.user ?? String(req.user?._id);
+        const userId = await resolveTargetUser(req);
+        if (!userId) return res.status(403).json(FORBIDDEN_USER);
 
         const transcriptionId = String(req.body.transcriptionId || "");
         const action = String(req.body.action || "short_summary");
@@ -1339,7 +1362,8 @@ export const aiNativeController = catchAsync(
     async (req: Request, res: Response) => {
         const { ai, Type } = await getGeminiClient();
 
-        const userId = req.body.user ?? String(req.user?._id);
+        const userId = await resolveTargetUser(req);
+        if (!userId) return res.status(403).json(FORBIDDEN_USER);
         const page: PageKind = (
             (req.body.page as string) || "general"
         ).toLowerCase() as PageKind;

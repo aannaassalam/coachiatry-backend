@@ -72,7 +72,7 @@ const messageSchema = new Schema<IMessageDocument>(
         jobId: { type: String, default: null },
         repeat: {
             type: String,
-            enum: ["none", "daily", "weekly", "monthly", "yearly"],
+            enum: ["none", "once", "daily", "weekly", "monthly", "yearly"],
             default: "none",
         },
         status: {
@@ -81,6 +81,11 @@ const messageSchema = new Schema<IMessageDocument>(
             default: "pending",
         },
         deletedAt: { type: Date },
+        // Declared explicitly instead of being left to `timestamps: true`,
+        // which adds it as an IMMUTABLE path — that silently discarded the
+        // message worker's restamp when a scheduled message fires. Mongoose
+        // still fills this in on insert; it is only now writable afterwards.
+        createdAt: { type: Date, immutable: false },
     },
     {
         timestamps: true,

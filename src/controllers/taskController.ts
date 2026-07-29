@@ -7,6 +7,7 @@ import { sendResponse } from "../utils/response";
 import UserModel from "../model/userModel";
 import AppError from "../utils/appError";
 import { getNextOccurrence } from "../utils/workers/taskWorker";
+import { canActForUser } from "../utils/authorize";
 import StatusModel from "../model/statusModel";
 import { taskQueue } from "../utils/queues/taskQueue";
 import moment from "moment";
@@ -581,9 +582,22 @@ export const getCoachTasks = catchAsync(
 
 export const importBulkTasks = catchAsync(
     async (req: Request, res: Response, next: NextFunction) => {
-        const user = req.user?._id;
-        if (!user) {
+        const requester = req.user?._id;
+        if (!requester) {
             return next(new AppError("Authenticated user required", 401));
+        }
+
+        // `userId` is how the coach transcript view files AI-generated tasks
+        // into the CLIENT's list. It used to be ignored, so a coach importing
+        // from a client's transcript silently got the tasks themselves.
+        const user = req.body.userId ? String(req.body.userId) : requester;
+        if (
+            String(user) !== String(requester) &&
+            !(await canActForUser(user, String(requester), req.user.role))
+        ) {
+            return next(
+                new AppError("You are not allowed to access this user's data", 403),
+            );
         }
 
         const rawTasks = Array.isArray(req.body.tasks) ? req.body.tasks : [];

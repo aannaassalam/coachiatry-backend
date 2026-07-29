@@ -23,6 +23,20 @@ async function isOwnerOrManager(ownerId: any, requesterId: string) {
 // to a strict hierarchy check only once that data is guaranteed complete.
 const STAFF_ROLES = ["admin", "manager", "coach"];
 
+// May the requester read/act on `targetUserId`'s data? Staff are trusted (see
+// the note above); everyone else must be that user or sit in their management
+// hierarchy. THE single definition of that rule — route guards and the AI
+// controllers (which take the target from `req.body.user`) all route through it.
+export async function canActForUser(
+    targetUserId: any,
+    requesterId: string,
+    role?: string,
+): Promise<boolean> {
+    if (!targetUserId) return false;
+    if (role && STAFF_ROLES.includes(role)) return true;
+    return isOwnerOrManager(targetUserId, requesterId);
+}
+
 // Tasks: the owner, an assignee, anyone in the owner's hierarchy, OR a staff
 // member (coach/manager/admin) may read/edit/delete. Staff access mirrors the
 // coach model used for chat/managed-user access so coaches can manage (and
@@ -33,14 +47,12 @@ export const authorizeTaskAccess = (paramName = "id") =>
         if (!task) return next(new AppError("Task not found", 404));
 
         const requesterId = req.user._id.toString();
-        const isStaff = !!req.user.role && STAFF_ROLES.includes(req.user.role);
         const isAssignee = task.assignedTo.some(
             (id) => id.toString() === requesterId,
         );
         if (
-            isStaff ||
             isAssignee ||
-            (await isOwnerOrManager(task.user, requesterId))
+            (await canActForUser(task.user, requesterId, req.user.role))
         ) {
             return next();
         }
@@ -49,7 +61,10 @@ export const authorizeTaskAccess = (paramName = "id") =>
         );
     });
 
-// Documents: owner, someone the doc is shared with, or the owner's hierarchy.
+// Documents: owner, someone the doc is shared with, the owner's hierarchy, or a
+// staff member. Same story as transcriptions — staff could list a client's docs
+// via /documents/coach but got a 403 opening, editing or deleting any of them,
+// because this required a complete `assignedCoach` chain.
 export const authorizeDocumentAccess = (paramName = "id") =>
     catchAsync(async (req: Request, res: Response, next: NextFunction) => {
         const doc = await DocumentModel.findById(req.params[paramName]);
@@ -59,7 +74,10 @@ export const authorizeDocumentAccess = (paramName = "id") =>
         const isShared = (doc.sharedWith ?? []).some(
             (id: any) => id.toString() === requesterId,
         );
-        if (isShared || (await isOwnerOrManager(doc.user, requesterId))) {
+        if (
+            isShared ||
+            (await canActForUser(doc.user, requesterId, req.user.role))
+        ) {
             return next();
         }
         return next(
@@ -67,14 +85,17 @@ export const authorizeDocumentAccess = (paramName = "id") =>
         );
     });
 
-// Transcriptions: owner or the owner's hierarchy.
+// Transcriptions: owner, the owner's hierarchy, or a staff member. Staff access
+// mirrors tasks/chat/saved filters — without it a coach could see a client's
+// transcripts in the /coach list but got a 403 opening any one of them, because
+// this was the only guard still requiring a complete `assignedCoach` chain.
 export const authorizeTranscriptionAccess = (paramName = "id") =>
     catchAsync(async (req: Request, res: Response, next: NextFunction) => {
         const doc = await TranscriptionModel.findById(req.params[paramName]);
         if (!doc) return next(new AppError("Transcription not found", 404));
 
         const requesterId = req.user._id.toString();
-        if (await isOwnerOrManager(doc.user, requesterId)) {
+        if (await canActForUser(doc.user, requesterId, req.user.role)) {
             return next();
         }
         return next(
@@ -95,10 +116,9 @@ export const authorizeSavedFilterAccess = (paramName = "id") =>
         if (!doc) return next(new AppError("Saved filter not found", 404));
 
         const requesterId = req.user._id.toString();
-        const isStaff = !!req.user.role && STAFF_ROLES.includes(req.user.role);
         // Pre-`forUser` docs fall back to their creator as the sheet owner.
         const sheetOwner = doc.forUser ?? doc.user;
-        if (isStaff || (await isOwnerOrManager(sheetOwner, requesterId))) {
+        if (await canActForUser(sheetOwner, requesterId, req.user.role)) {
             return next();
         }
         return next(
@@ -204,16 +224,12 @@ export const authorizeChatAccess = (paramName = "roomId") =>
 // note on canAccessChat about why a strict hierarchy-only check was relaxed.
 export const authorizeManagedUser = (paramName = "userId") =>
     catchAsync(async (req: Request, res: Response, next: NextFunction) => {
-        const isStaff = !!req.user.role && STAFF_ROLES.includes(req.user.role);
-        if (
-            isStaff ||
-            (await isOwnerOrManager(
-                req.params[paramName],
-                req.user._id.toString(),
-            ))
-        ) {
-            return next();
-        }
+        const ok = await canActForUser(
+            req.params[paramName],
+            req.user._id.toString(),
+            req.user.role,
+        );
+        if (ok) return next();
         return next(
             new AppError("You are not allowed to access this user's data", 403),
         );

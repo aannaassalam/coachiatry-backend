@@ -6,6 +6,8 @@ import { redisConnection } from "../redis";
 import { sendMessageNotification } from "../messagingNotifications";
 import { touchChatLastMessage } from "../chatActivity";
 
+const RECURRING_REPEATS = new Set(["daily", "weekly", "monthly", "yearly"]);
+
 function getNextOccurrence(current: Date, repeat: string): Date {
     const next = new Date(current);
     switch (repeat) {
@@ -37,7 +39,7 @@ export const messageWorker = new Worker(
         let sentMessage;
 
         // Handle repeating schedules
-        if (template.repeat && template.repeat !== "none") {
+        if (RECURRING_REPEATS.has(template.repeat)) {
             sentMessage = await MessageModel.create({
                 chat: template.chat,
                 sender: template.sender,
@@ -67,8 +69,13 @@ export const messageWorker = new Worker(
             template.jobId = nextJob.id;
             await template.save();
         } else {
-            // Mark one-time schedule as done
+            // Mark one-time schedule as done. Stamp createdAt with the send
+            // time (like the recurring branch does) — it was set when the
+            // schedule was created, which would slot the message into the
+            // chat history in the past and make touchChatLastMessage's
+            // "only move forward" guard drop the preview update.
             template.status = "sent";
+            template.createdAt = template.scheduledAt ?? new Date();
             template.scheduledAt = null;
             template.jobId = null;
             await template.save();
